@@ -351,13 +351,10 @@ class VectorQuantizerVAE:
         ax.set_xlabel('iteration')
         plt.show()
 
-    def eval(self,validation_data):
-        self.validation_loader = DataLoader(validation_data,
-                                    batch_size=32,
-                                    shuffle=True,
-                                    pin_memory=True)
+    def eval(self,validation_iterator):
+        
         self.model.eval()
-        valid_originals = next(iter(self.validation_loader))[0]
+        valid_originals = next(iter(validation_iterator))
         valid_originals = valid_originals.to(self.device)
 
         vq_output_eval = self.model._pre_vq_conv(self.model._encoder(valid_originals))

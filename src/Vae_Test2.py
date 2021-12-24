@@ -16,13 +16,17 @@ validation_data = datasets.CIFAR10(root="data", train=False, download=True,
                                      transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
                                   ]))
 
-training_loader = DataLoader(validation_data, #maybe self?
+training_loader = DataLoader(training_data, #maybe self?
                                     batch_size=32, 
                                     shuffle=True,
                                     pin_memory=True)
 
+validation_loader = DataLoader(validation_data,
+                                    batch_size=32,
+                                    shuffle=True,
+                                    pin_memory=True)
 data_variance = np.var(training_data.data / 255.0)                                  
 vae_eq_model = vaeq("cifar")
-vae_eq_model.train(training_data,data_variance)
+#vae_eq_model.train(training_data,data_variance)
 vae_eq_model.load()
-vae_eq_model.eval(validation_data)
+vae_eq_model.eval(validation_loader)

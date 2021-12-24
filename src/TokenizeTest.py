@@ -5,6 +5,7 @@ from torch import nn
 import gym
 import minerl
 from sklearn.cluster import KMeans
+from torch.utils.data.dataset import IterableDataset
 from transformers import pipeline
 from transformers import AutoTokenizer
 from  Model.vq_vae import VectorQuantizerVAE as vaeq
@@ -37,7 +38,7 @@ TEST_KMEANS_MODEL_NAME = 'centroids_for_research_potato.npy'  # name to use when
 TEST_EPISODES = 10  # number of episodes to test the agent for.
 MAX_TEST_EPISODE_LEN = 18000  # 18k is the default for MineRLObtainDiamondVectorObf.
 
-TRAIN=False
+TRAIN=True
 
 '''
 
@@ -78,12 +79,12 @@ class TestDataset(Dataset):
     def __len__(self):
         return self.array.shape[0]
 
-class MinerlDatasetSamples(Dataset):
+class MinerlDatasetSamples(IterableDataset):
     r"""Dataset wrapping tensors.
 
     Each sample will be retrieved by indexing tensors along the first dimension.
 
-    Args:
+    Args
         *tensors (Tensor): tensors that have the same size of the first dimension.
     """
 
@@ -93,12 +94,42 @@ class MinerlDatasetSamples(Dataset):
 
     def __getitem__(self, index):
         if self.transform:
-            return self.transform(self.iterator[index])
+            return self.transform(self.iterator.buffered_batch_iter(batch_size=32, num_epochs=1)[index])
         else:
-            return self.iterator[index]
+            return iter(self.iterator.buffered_batch_iter(batch_size=32, num_epochs=1)[index])
 
-    def __len__(self):
-        return self.iterator.buffer_target_size
+class MinerlImageIterator:
+    def __init__(self,data):
+        self.iterator = BufferedBatchIter(data)
+
+    def __next__(self):
+        dataset_observation, _, _, _, _ = next(self.iterator.buffered_batch_iter(batch_size=1, num_epochs=1))
+        return dataset_observation["pov"]
+    def __iter__(self):
+        return self
+
+
+
+
+class MinerlDatasetSamplesImages(IterableDataset):
+    r"""Dataset wrapping tensors.
+
+    Each sample will be retrieved by indexing tensors along the first dimension.
+
+    Args
+        *tensors (Tensor): tensors that have the same size of the first dimension.
+    """
+
+    def __init__(self,data,transform):
+        self.iterator = BufferedBatchIter(data)
+        self.transform = transform
+
+    def __iter__(self):
+        dataset_observation, _, _, _, _ = next(self.iterator.buffered_batch_iter(batch_size=1, num_epochs=1))
+        if self.transform:
+            return self.transform(dataset_observation["pov"])
+        else:
+            return dataset_observation["pov"]
 
 
 
@@ -111,9 +142,10 @@ class MinerlDatasetImages(Dataset):
         *tensors (Tensor): tensors that have the same size of the first dimension.
     """
 
-    def __init__(self,data,transform):
+    def __init__(self,data,numSamples,transform):
         self.data=data
         self.observations = []
+        self.numSamples=numSamples
         self.transform = transform
         trajectory_names = self.data.get_trajectory_names()
         random.shuffle(trajectory_names)
@@ -124,7 +156,7 @@ class MinerlDatasetImages(Dataset):
             trajectory = data.load_data(trajectory_name, skip_interval=0, include_metadata=False)
             for dataset_observation, dataset_action, _, _, _ in trajectory:
               self.observations.append(dataset_observation["pov"])
-            if len(self.observations) >= DATA_SAMPLES:
+            if len(self.observations) >= self.numSamples:
                 break
 
         random.shuffle(self.observations)
@@ -137,13 +169,7 @@ class MinerlDatasetImages(Dataset):
             return self.observations[index]
 
     def __len__(self):
-        return self.observations.len
-
-
-minerl.data.download(directory='data', environment='MineRLObtainIronPickaxeVectorObf-v0')
-data = minerl.data.make("MineRLObtainIronPickaxeVectorObf-v0",  data_dir='data', num_workers=1)
-
-env = gym.make('MineRLObtainDiamondVectorObf-v0')
+        return len(self.observations)
 
 def getSamples():
     all_actions = []
@@ -182,26 +208,41 @@ def getSamples():
     print(data_variance)
     observation_dataset = TestDataset(training_data, transforms.ToTensor())
     validation_dataset = TestDataset(validation_data, transforms.ToTensor())#transform=transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
-    return (training_data,validation_data,data_variance)
+    return (observation_dataset,validation_dataset,data_variance)
 
+
+minerl.data.download(directory='data', environment='MineRLObtainIronPickaxeVectorObf-v0')
+data = minerl.data.make("MineRLObtainIronPickaxeVectorObf-v0",  data_dir='data', num_workers=1)
+
+env = gym.make('MineRLObtainDiamondVectorObf-v0')
 
 vae_model=vaeq("test")
 
-
 if TRAIN :
     (observation_dataset,validation_dataset,data_variance) =getSamples()
-    #observation_dataset=MinerlDatasetSamples(transforms.ToTensor())
-    #validation_dataset=MinerlDatasetSamples(transforms.ToTensor())
-    observation_dataset=MinerlDatasetSamples(transforms.ToTensor())
-    validation_dataset=MinerlDatasetSamples(transforms.ToTensor())
-    
-    vae_model.train(observation_dataset,data_variance)
+    observation_dataset=MinerlDatasetImages(data,DATA_SAMPLES-VALIDATION_SAMPLES,transforms.ToTensor())
+    validation_dataset=MinerlDatasetImages(data,VALIDATION_SAMPLES,transforms.ToTensor())
+    validation_loader = DataLoader(observation_dataset, #maybe self?
+                                    batch_size=32, 
+                                    shuffle=True,
+                                    pin_memory=True)
+    validation_loader = DataLoader(validation_dataset, #maybe self?
+                                    batch_size=32, 
+                                    shuffle=True,
+                                    pin_memory=True)
+
+    vae_model.train(validation_loader,data_variance)
     vae_model.plot()
-    vae_model.eval(validation_dataset)
+    vae_model.eval(validation_loader)
+    
 else :
     vae_model.load()
-    validation_dataset=MinerlDatasetSamples(transforms.ToTensor())
-    vae_model.eval(validation_dataset)
+    validation_dataset=MinerlDatasetImages(data,VALIDATION_SAMPLES,transforms.ToTensor())
+    validation_loader = DataLoader(validation_dataset, #maybe self?
+                                    batch_size=32, 
+                                    shuffle=True,
+                                    pin_memory=True)
+    vae_model.eval(validation_loader)
 
 #vae_model.showEmbedding()
 
