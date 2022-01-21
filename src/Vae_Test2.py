@@ -27,6 +27,6 @@ validation_loader = DataLoader(validation_data,
                                     pin_memory=True)
 data_variance = np.var(training_data.data / 255.0)                                  
 vae_eq_model = vaeq("cifar")
-#vae_eq_model.train(training_data,data_variance)
+vae_eq_model.train(training_loader,data_variance)
 vae_eq_model.load()
 vae_eq_model.eval(validation_loader)
