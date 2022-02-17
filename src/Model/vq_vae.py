@@ -40,17 +40,23 @@ class VectorQuantizerEMA(nn.Module):
         input_shape = inputs.shape
         # Flatten input
         flat_input = inputs.view(-1, self._embedding_dim)
+
+        
         
         # Calculate distances
-        distances = (torch.sum(flat_input**2, dim=1, keepdim=True) 
-                    + torch.sum(self._embedding.weight**2, dim=1)
-                    - 2 * torch.matmul(flat_input, self._embedding.weight.t()))
+        distances = torch.cdist(flat_input,self._embedding.weight)
+        
+       
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
         encodings = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
         encodings.scatter_(1, encoding_indices, 1)
+        #print(flat_input.shape)
+        #print(self._embedding.weight.t().shape)
+        #print(distances.shape)
         # Quantize and unflatten
         quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
+        #print(quantized.shape)
         # Use EMA to update the embedding vectors
         if self.training:
             self._ema_cluster_size = self._ema_cluster_size * self._decay + \
@@ -104,15 +110,12 @@ class VectorQuantizer(nn.Module):
         flat_input = inputs.view(-1, self._embedding_dim)
         
         # Calculate distances
-        distances = (torch.sum(flat_input**2, dim=1, keepdim=True) 
-                    + torch.sum(self._embedding.weight**2, dim=1)
-                    - 2 * torch.matmul(flat_input, self._embedding.weight.t()))#torch.cdist(flat_inputs,self.embeddings.weight)? aparetemente equivalente
+        distances = torch.cdist(flat_input,self.embeddings.weight)
             
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
         encodings = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
         encodings.scatter_(1, encoding_indices, 1)
-        
         # Quantize and unflatten
         quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
         
@@ -282,7 +285,6 @@ class VectorQuantizerVAE:
         self.num_embeddings = num_embeddings
 
         self.commitment_cost = commitment_cost
-
         self.decay = decay
         #create model and optimizer
         self._checkpoint_file ="./models/"+self.model_name                          
@@ -308,6 +310,7 @@ class VectorQuantizerVAE:
     
             data = data.to(self.device)
             self.optimizer.zero_grad()
+            #print(torch.cuda.memory_allocated(device=self.device))
 
             vq_loss, data_recon, perplexity = self.model(data)
             recon_error = F.mse_loss(data_recon, data) / data_variance
