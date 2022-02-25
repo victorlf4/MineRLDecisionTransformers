@@ -75,9 +75,9 @@ class DecisionTransformer(nn.Module):
 
         # this makes the sequence look like (R_1, s_1, a_1, R_2, s_2, a_2, ...)
         # which works nice in an autoregressive sense since states predict actions
-        returns_embeddings=returns_embeddings.unsqueeze(0)#!!!!añadido por no hacerlo antes 
-        state_embeddings=state_embeddings.unsqueeze(0)
-        action_embeddings=action_embeddings.unsqueeze(0)
+       # returns_embeddings=returns_embeddings.unsqueeze(0)#!!!!añadido por no hacerlo antes 
+        #state_embeddings=state_embeddings.unsqueeze(0)
+        #action_embeddings=action_embeddings.unsqueeze(0)
         stacked_inputs = torch.stack(
             (returns_embeddings, state_embeddings, action_embeddings), dim=1
         ).permute(0, 2, 1, 3).reshape(batch_size, 3*seq_length, self.hidden_size)

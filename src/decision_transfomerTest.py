@@ -8,6 +8,8 @@ import minerl
 from sklearn.cluster import KMeans
 from torch.utils.data.dataset import IterableDataset
 from  Model.vq_vae import VectorQuantizerVAE as vaeq
+import os
+import wandb
 
 from torch.utils.data import TensorDataset
 import torchvision.transforms as transforms
@@ -26,7 +28,7 @@ LEARNING_RATE = 0.0001  # Learning rate for the neural network.
 BATCH_SIZE = 32
 NUM_ACTION_CENTROIDS = 100  # Number of KMeans centroids used to cluster the data.
 
-DATA_SAMPLES = 40000  # how many samples to use from the dataset. Impacts RAM usage
+DATA_SAMPLES = 4000  # how many samples to use from the dataset. Impacts RAM usage
 
 VALIDATION_SAMPLES = 400  # how many samples to use from the dataset. Impacts RAM usage
 
@@ -40,7 +42,7 @@ MAX_TEST_EPISODE_LEN = 18000  # 18k is the default for MineRLObtainDiamondVector
 
 TRAIN=False
 EVAL=False
-
+log_to_wandb=True
 
 """# Download the data"""
 class MinerlDatasetSamples(IterableDataset):
@@ -189,15 +191,20 @@ def reward2go(rewards):
         remainingR=reward2go
     return rewards2go
 
+if log_to_wandb:
+        wandb.init(
+            name="test",
+            group="test 2",
+            project='decision-transformer'
+        )
 
-
-minerl.data.download(directory='data', environment='MineRLObtainIronPickaxeVectorObf-v0')
+#minerl.data.download(directory='data', environment='MineRLObtainIronPickaxeVectorObf-v0')
 data = minerl.data.make("MineRLObtainIronPickaxeVectorObf-v0",  data_dir='data', num_workers=1)
 
 env = gym.make('MineRLObtainDiamondVectorObf-v0')
 
-vae_model=vaeq("embedingdim_3",embedding_dim = 3,num_embeddings =65536,batch_size=16)
-
+vae_model=vaeq("embedingdim_1",embedding_dim = 1,num_embeddings =65536,batch_size=16)
+#vae_model=vaeq("test")
 if TRAIN :
    
     observation_dataset=MinerlDatasetImages(data,DATA_SAMPLES-VALIDATION_SAMPLES,transforms.ToTensor())
@@ -250,11 +257,12 @@ all_actions = np.array(all_actions)
 #all_pov_obs = np.array(all_pov_obs)
 all_rewards = np.array(all_rewards)
 all_done = np.array(all_done)
+'''temporarily deactivated kmeans(remeber to check action_dim is 1 when I reactivate it)
 print("Running KMeans on the action vectors")
 kmeans = KMeans(n_clusters=NUM_ACTION_CENTROIDS)
 kmeans.fit(all_actions)
 action_centroids = kmeans.cluster_centers_
-
+'''
 print("KMeans done")
 #convirtiendo una trayectoria a una sequencia(rewardsFuturos,estado,Accion,rewardsFuturos2,estado2.accion2...) 
 
@@ -262,9 +270,12 @@ all_pov_obs=th.cat(all_pov_obs)
 #Prepocesamos como en la baseline
 # calculamos las distancias a los centroides
 # "None" in indexing adds a new dimension that allows the broadcasting 
+'''
 distancias = np.sum((all_actions - action_centroids[:, None]) ** 2, axis=2)
 trajectory_actions = np.argmin(distancias, axis=0)
-
+'''
+trajectory_actions= all_actions #temportal porque quite kmeans
+print(all_actions.shape)
 #maybe usar nn.embeding para los embedings de los rewards y acciones
 #Pasamos a tensores todos los 
 all_rewards=th.from_numpy(all_rewards)
@@ -275,7 +286,7 @@ trajectory_actions=th.from_numpy(trajectory_actions)
 all_rewards=th.unsqueeze(all_rewards,1)
 rewardsTogo=th.tensor(rewardsTogo)
 rewardsTogo=th.unsqueeze(rewardsTogo,1)
-trajectory_actions=th.unsqueeze(trajectory_actions,1)
+#trajectory_actions=th.unsqueeze(trajectory_actions,1)#temportal porque quite kmeans#maybe add un if kameans en el eval?
 
 
 #all_pov_obs=th.unsqueeze(all_pov_obs,1)
@@ -295,13 +306,14 @@ from Model import decision_transformer ,seq_trainer
 obs_dim=all_pov_obs.shape[1]
 act_dim=trajectory_actions.shape[1]
 max_ep_len=10000
-max_length=1000
+max_length=20
 max_iters=10
-num_steps_per_iter=10000
-batch_size=256
+num_steps_per_iter=1
+batch_size=64
 device = th.device("cuda" if th.cuda.is_available() else "cpu")
 
 
+state_mean, state_std = th.mean(all_pov_obs.to(dtype=th.float32), axis=0).numpy(), th.std(all_pov_obs.to(dtype=th.float32), axis=0).numpy() + 1e-6
 model = decision_transformer.DecisionTransformer(
             state_dim=obs_dim,
             act_dim=act_dim,
@@ -322,7 +334,6 @@ optimizer = th.optim.AdamW(
         weight_decay=1e-4,
     )
 
-
 #all_pov_obs=list(all_pov_obs)
 #trajectory_actions=list(trajectory_actions)
 #rewardsTogo=list(rewardsTogo)
@@ -337,9 +348,8 @@ timestamped_steps =	{
 #timestamped_steps =np.concatenate([all_pov_obs,trajectory_actions,rewardsTogo,np.expand_dims(all_done,1),np.expand_dims(range(all_pov_obs.shape[0]),1)], axis=1, out=None, dtype=None)#añadimos el range como tiemstamp del step
 #print("test")
 #print(timestamped_steps.shape)
-
-
-state_dim=all_pov_obs.shape[0]
+print("teast action")
+state_dim=all_pov_obs.shape[1]
 
 def get_batch(batch_size=256, max_len=max_length):
     obsBatch=[]
@@ -364,6 +374,7 @@ def get_batch(batch_size=256, max_len=max_length):
       #mask.append(np.concatenate([np.zeros((1, max_len - trajectory_lenght)), np.ones((1, trajectory_lenght))], axis=1))#create mask 0 in the padding
       # add padding to the right
       state_dim=obsBatch[-1].shape[1]#shape of obs encoding
+     
       obsBatch[-1] = np.concatenate([np.zeros((max_len - trajectory_lenght, state_dim)), obsBatch[-1]], axis=0)
       actionBatch[-1] = np.concatenate([np.ones(( max_len - trajectory_lenght, act_dim)) * -10., actionBatch[-1]], axis=0)
       rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - trajectory_lenght, 1)), rewardsBatch[-1]], axis=0)
@@ -372,6 +383,7 @@ def get_batch(batch_size=256, max_len=max_length):
       #rtg[-1] = np.concatenate([np.zeros((1, max_len - timestamped_steps, 1)), rtg[-1]], axis=1) 
       timesteps[-1] = np.concatenate([np.zeros(( max_len - trajectory_lenght)), timesteps[-1]], axis=0)
       mask.append(np.concatenate([np.zeros((max_len - trajectory_lenght)), np.ones(( trajectory_lenght))], axis=0))
+    '''
     obsBatch = th.from_numpy(np.concatenate(obsBatch, axis=0)).to(dtype=th.float32, device=device)
     actionBatch = th.from_numpy(np.concatenate(actionBatch, axis=0)).to(dtype=th.float32, device=device)
     rewardsBatch = th.from_numpy(np.concatenate(rewardsBatch, axis=0)).to(dtype=th.float32, device=device)
@@ -380,7 +392,15 @@ def get_batch(batch_size=256, max_len=max_length):
     timesteps = th.from_numpy(np.concatenate(timesteps, axis=0)).to(dtype=th.long, device=device)
     mask = th.from_numpy(np.concatenate(mask, axis=0)).to(device=device)
     #mask=th.tensor(mask).to(device=device)
-
+'''
+    obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)
+    actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
+    rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
+    doneBatch = th.tensor(doneBatch).to(dtype=th.long, device=device)
+    rtgBatch = th.tensor(rtgBatch).to(dtype=th.float32, device=device)
+    timesteps = th.tensor(timesteps).to(dtype=th.long, device=device)
+    mask = th.tensor(mask).to(device=device)
+    #mask=th.tensor(mask).to(device=device)
     return obsBatch,actionBatch,rewardsBatch,doneBatch ,rtgBatch,timesteps,mask
 
 print("batch")
@@ -389,63 +409,19 @@ print("batch")
 #timesteps.append(np.arange(si, si + s[-1].shape[1]).reshape(1, -1))
 #timesteps[-1][timesteps[-1] >= max_ep_len] = max_ep_len-1  # padding cutoff
 #????????
-'''
-def get_batchDT(batch_size=256, max_len=K):
-        batch_inds = np.random.choice(
-            np.arange(num_trajectories),
-            size=batch_size,
-            replace=True,
-            p=p_sample,  # reweights so we sample according to timesteps
-        )
-        s, a, r, d, rtg, timesteps, mask = [], [], [], [], [], [], []
-        for i in range(batch_size):
-            traj = timestamped_steps
-            si = random.randint(0, traj['rewards'].shape[0] - 1)
 
-            # get sequences from dataset
-            s.append(traj['observations'][si:si + max_len].reshape(1, -1, state_dim))
-            a.append(traj['actions'][si:si + max_len].reshape(1, -1, act_dim))
-            r.append(traj['rewards'][si:si + max_len].reshape(1, -1, 1))
-            if 'terminals' in traj:
-                d.append(traj['terminals'][si:si + max_len].reshape(1, -1))
-            else:
-                d.append(traj['dones'][si:si + max_len].reshape(1, -1))
-            timesteps.append(np.arange(si, si + s[-1].shape[1]).reshape(1, -1))
-            timesteps[-1][timesteps[-1] >= max_ep_len] = max_ep_len-1  # padding cutoff
-            rtg.append(discount_cumsum(traj['rewards'][si:], gamma=1.)[:s[-1].shape[1] + 1].reshape(1, -1, 1))
-            if rtg[-1].shape[1] <= s[-1].shape[1]:
-                rtg[-1] = np.concatenate([rtg[-1], np.zeros((1, 1, 1))], axis=1)
-
-            # padding and state + reward normalization
-            tlen = s[-1].shape[1]
-            s[-1] = np.concatenate([np.zeros((1, max_len - tlen, state_dim)), s[-1]], axis=1)
-            s[-1] = (s[-1] - state_mean) / state_std
-            a[-1] = np.concatenate([np.ones((1, max_len - tlen, act_dim)) * -10., a[-1]], axis=1)
-            r[-1] = np.concatenate([np.zeros((1, max_len - tlen, 1)), r[-1]], axis=1)
-            d[-1] = np.concatenate([np.ones((1, max_len - tlen)) * 2, d[-1]], axis=1)
-            rtg[-1] = np.concatenate([np.zeros((1, max_len - tlen, 1)), rtg[-1]], axis=1) / scale
-            timesteps[-1] = np.concatenate([np.zeros((1, max_len - tlen)), timesteps[-1]], axis=1)
-            mask.append(np.concatenate([np.zeros((1, max_len - tlen)), np.ones((1, tlen))], axis=1))
-
-        s = th.from_numpy(np.concatenate(s, axis=0)).to(dtype=th.float32, device=device)
-        a = th.from_numpy(np.concatenate(a, axis=0)).to(dtype=th.float32, device=device)
-        r = th.from_numpy(np.concatenate(r, axis=0)).to(dtype=th.float32, device=device)
-        d = th.from_numpy(np.concatenate(d, axis=0)).to(dtype=th.long, device=device)
-        rtg = th.from_numpy(np.concatenate(rtg, axis=0)).to(dtype=th.float32, device=device)
-        timesteps = th.from_numpy(np.concatenate(timesteps, axis=0)).to(dtype=th.long, device=device)
-        mask = th.from_numpy(np.concatenate(mask, axis=0)).to(device=device)
-
-        return s, a, r, d, rtg, timesteps, 
-'''
-
-warmup_steps=10000
-num_eval_episodes=100
-env_targets = [12000, 6000]# evaluation conditioning targets ???? wtf is this
+warmup_steps=1
+num_eval_episodes=1
+env_targets = [547, 100]#target rewards for
 
 scheduler = th.optim.lr_scheduler.LambdaLR(
         optimizer,
         lambda steps: min((steps+1)/warmup_steps, 1)
     )
+
+
+
+
 from Model.evaluate_episodes import evaluate_episode_rtg
 mode="delayed"#?? says normal for standard setting, delayed for sparse sso i guess delayed cause diamond is sparse kind of
 def eval_episodes(target_rew):
@@ -458,12 +434,13 @@ def eval_episodes(target_rew):
                             state_dim,
                             act_dim,
                             model,
+                            vae_model,
                             max_ep_len=max_ep_len,
                             scale=1,#1 cause i dont want scale , amybe even remove any scalling directly and treat reward as tokens
                             target_return=target_rew/1,
                             mode=mode,
-                            state_mean=1,#reemplazar en codigo? dado que no paso estados
-                            state_std=1,
+                            state_mean=state_mean,#reemplazar en codigo? dado que no paso estados
+                            state_std=state_std,
                             device=device,
                         )
                 returns.append(ret)
@@ -483,8 +460,26 @@ trainer = seq_trainer.SequenceTrainer(
             get_batch=get_batch,
             scheduler=scheduler,
             loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: th.mean((a_hat - a)**2),
-            eval_fns=[eval_episodes(tar) for tar in env_targets],
+            eval_fns=[eval_episodes(tar) for tar in env_targets],#eval model for each target reward
         )
+def save(epoch,checkpoint_file):
+        th.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict()
+            },checkpoint_file)
+def load(validation_data=None):
+            checkpoint = th.load(checkpoint_file)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+checkpoint_file ="./models/decisonTransformer"
+if os.path.exists(checkpoint_file):
+    print("loading save")
+    load()
+
 
 for iter in range(max_iters):
-    outputs = trainer.train_iteration(num_steps=num_steps_per_iter, iter_num=iter+1, print_logs=True)
+        outputs = trainer.train_iteration(num_steps=num_steps_per_iter, iter_num=iter+1, print_logs=True)
+        save(iter,checkpoint_file)
+        if log_to_wandb:
+            wandb.log(outputs)
