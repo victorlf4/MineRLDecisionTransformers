@@ -1,7 +1,7 @@
 
 data/*
-
-
+wandb/*
+logs/*
 
 ## PyTorch
 
@@ -309,3 +309,5 @@ pr.diff
 
 # coverage files
 */**/.coverage.*
+logs/mc_232.log
+logs/mc_244.log
