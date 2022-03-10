@@ -90,6 +90,8 @@ class VectorQuantizerEMA(nn.Module):
 
 
 
+
+
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost):
         super(VectorQuantizer, self).__init__()
@@ -385,17 +387,28 @@ class VectorQuantizerVAE:
         if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
             image=image[0]
         image= image.to(self.device)
-        vq_output = self.model._pre_vq_conv(self.model._encoder(image))
-        _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
         return encodings
     def encodeSingle(self,image):
         if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
             image=image[0]
         image= torch.unsqueeze(image,0)
         image= image.to(self.device)
-        vq_output = self.model._pre_vq_conv(self.model._encoder(image))
-        _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
         return encodings
+    def quantizeSingle(self,image):
+        if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+            image=image[0]
+        image= torch.unsqueeze(image,0)
+        image= image.to(self.device)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        return quantized    
     def save(self,epoch):
         torch.save({
             'epoch': epoch,

@@ -73,6 +73,7 @@ def evaluate_episode_rtg(
         act_dim,
         model,
         vq_vae,
+        action_centroids=None,#if we are using kmeans
         max_ep_len=1000,
         scale=1000.,
         state_mean=0.,
@@ -89,10 +90,10 @@ def evaluate_episode_rtg(
     state_std = torch.from_numpy(state_std).to(device=device)
 
     state = env.reset()
-    state=tokenize_image(vq_vae,state["pov"])
+    state=tokenize_image(vq_vae,state["pov"])#TODO only if vq_vae
     if mode == 'noise':
         state = state + np.random.normal(0, 0.1, size=state.shape)
-
+    
     # we keep all the histories on the device
     # note that the latest action and reward will be "padding"
     states = state.reshape(1, state_dim).to(device=device, dtype=torch.float32)
@@ -107,7 +108,7 @@ def evaluate_episode_rtg(
 
     episode_return, episode_length = 0, 0
     for t in range(max_ep_len):
-
+        
         # add padding
         actions = torch.cat([actions, torch.zeros((1, act_dim), device=device)], dim=0)
         rewards = torch.cat([rewards, torch.zeros(1, device=device)])
@@ -121,10 +122,11 @@ def evaluate_episode_rtg(
         )
         actions[-1] = action
         action = action.detach().cpu().numpy()
-        #action = action_centroids[action] #only because kmeans
+        if action_centroids is not None:#if we are using kmeans
+            action = action_centroids[np.around(action).astype(np.uint64)][0]#[0] because otherwise its a 2d array for some reason
         action = {"vector": action}
-
         state, reward, done, _ = env.step(action)
+        env.render(mode='human')
         state=state=tokenize_image(vq_vae,state["pov"])#tokenize observation whith vq_vae
         
         cur_state = state.reshape(1, state_dim)
@@ -143,9 +145,9 @@ def evaluate_episode_rtg(
 
         episode_return += reward
         episode_length += 1
-
+        if reward != 0:
+            print(reward)
+        
         if done:
             break
-    #env.release()
-    #env.play() ????
     return episode_return, episode_length

@@ -33,7 +33,8 @@ DATA_SAMPLES = 4000  # how many samples to use from the dataset. Impacts RAM usa
 VALIDATION_SAMPLES = 400  # how many samples to use from the dataset. Impacts RAM usage
 
 #TRAIN_MODEL_NAME = 'decisiontransformers_original_Kmeans_8x8x1vaeq'  # name to use when saving the trained agent.
-TRAIN_MODEL_NAME = 'decisiontransformers_modified_Kmeans_8x8x1vaeq_128'  # name to use when saving the trained agent.
+#TRAIN_MODEL_NAME = 'decisiontransformers_modified_Kmeans_8x8x1vaeq_128'  # name to use when saving the trained agent.
+TRAIN_MODEL_NAME = 'decisiontransformers_modified_8x8x1vaeq_256_noKmeans'  # name to use when saving the trained agent.
 TEST_MODEL_NAME = 'research_potato.pth'  # name to use when loading the trained agent.
 TRAIN_KMEANS_MODEL_NAME = 'centroids_for_research_potato.npy'  # name to use when saving the KMeans model.
 TEST_KMEANS_MODEL_NAME = 'centroids_for_research_potato.npy'  # name to use when loading the KMeans model.
@@ -45,10 +46,11 @@ MAX_TEST_EPISODE_LEN = 18000  # 18k is the default for MineRLObtainDiamondVector
 
 TRAIN=False
 EVAL=False
-log_to_wandb=False
-DISCRETE_ACTIONS=True
+log_to_wandb=True
+DISCRETE_ACTIONS=False
 DISCRETE_REWARDS=False
 
+checkpoint_file ="./models/"+TRAIN_MODEL_NAME
 """# Download the data"""
 class MinerlDatasetSamples(IterableDataset):
     r"""Dataset wrapping tensors.
@@ -263,19 +265,42 @@ all_actions = np.array(all_actions)
 all_pov_obs=th.stack(all_pov_obs)
 all_rewards = np.array(all_rewards)
 all_done = np.array(all_done)
-print("Running KMeans on the action vectors")
-kmeans = KMeans(n_clusters=NUM_ACTION_CENTROIDS)
-kmeans.fit(all_actions)
-action_centroids = kmeans.cluster_centers_
-print("KMeans done")#TODO necesito guardar el resultado de kmeans para solo hacerlo 1 vez sobre muchas acciones maybe junto al vqvae
+
+def save_kmeans():
+    th.save({
+            'action_centroids': action_centroids,
+            },checkpoint_file+"_kmeans")
+
+def load_kmeans():
+    checkpoint = th.load(checkpoint_file+"_kmeans")
+    action_centroids=checkpoint['action_centroids']
+    return action_centroids
+if DISCRETE_ACTIONS:
+    if os.path.exists(checkpoint_file+"_kmeans"):
+        action_centroids=load_kmeans()
+    else:
+        print("Running KMeans on the action vectors")
+        kmeans = KMeans(n_clusters=NUM_ACTION_CENTROIDS)
+        kmeans.fit(all_actions)
+        action_centroids = kmeans.cluster_centers_
+        print("KMeans done")
+        save_kmeans()
+else:
+    action_centroids=None
 #convirtiendo una trayectoria a una sequencia(rewardsFuturos,estado,Accion,rewardsFuturos2,estado2.accion2...) 
+ 
+
+
 
 #all_pov_obs=th.cat(all_pov_obs)
 #Prepocesamos como en la baseline
 # calculamos las distancias a los centroides
 # "None" in indexing adds a new dimension that allows the broadcasting 
-distancias = np.sum((all_actions - action_centroids[:, None]) ** 2, axis=2)
-trajectory_actions = np.argmin(distancias, axis=0)
+if DISCRETE_ACTIONS:
+    distancias = np.sum((all_actions - action_centroids[:, None]) ** 2, axis=2)
+    trajectory_actions = np.argmin(distancias, axis=0)
+else:
+    trajectory_actions=all_actions
 
 
 #maybe usar nn.embeding para los embedings de los rewards y acciones
@@ -308,19 +333,24 @@ else:
     act_dim=trajectory_actions.shape[1]
 obs_dim=all_pov_obs.shape[1]
 
-max_ep_len=10000
+max_ep_len=18000
 max_length=20
 max_iters=20
-num_steps_per_iter=1
+num_steps_per_iter=10000
 batch_size=64
 #TODO use gpu again once it works
-#device = th.device("cuda" if th.cuda.is_available() else "cpu")
-device=th.device("cpu")
+device = th.device("cuda" if th.cuda.is_available() else "cpu")#TODO fix not using cuda breaking things in dt
+#device=th.device("cpu")
 
 if DISCRETE_REWARDS :
     discrete_rewards=1095
 else:
     discrete_rewards=None
+
+if DISCRETE_ACTIONS:
+    num_action_centroids=NUM_ACTION_CENTROIDS
+else:
+    num_action_centroids=None
 
 
 state_mean, state_std = th.mean(all_pov_obs.to(dtype=th.float32), axis=0).numpy(), th.std(all_pov_obs.to(dtype=th.float32), axis=0).numpy() + 1e-6
@@ -346,8 +376,8 @@ model = decision_transformer_modified.DecisionTransformer(
             act_dim=act_dim,
             max_length=max_length,
             max_ep_len=max_ep_len,
-            discrete_rewards=None,#1095,#1095 is the number of posible reward combinations in the minerl enviroment, though most are very unlikely
-            discrete_actions=NUM_ACTION_CENTROIDS,
+            discrete_rewards=None,#1095,#1095 is the number of posible reward combinations in the minerl enviroment, though most are very unlikel
+            discrete_actions=num_action_centroids,
             discrete_states=65536,
             hidden_size=256,
             n_layer=3,
@@ -375,7 +405,7 @@ timestamped_steps =	{
   "rewards": all_rewards,
   "done": all_done,
   "rewards2go": rewardsTogo,
-  "timesteps": range(all_pov_obs.shape[0]),
+  "timesteps": range(all_rewards.shape[0]),
 }
 #timestamped_steps =np.concatenate([all_pov_obs,trajectory_actions,rewardsTogo,np.expand_dims(all_done,1),np.expand_dims(range(all_pov_obs.shape[0]),1)], axis=1, out=None, dtype=None)#añadimos el range como tiemstamp del step
 #print("test")
@@ -393,7 +423,7 @@ def get_batch(batch_size=64, max_len=max_length):
     mask =[]
 
     for i in range(batch_size):
-      inicio = random.randint(0, timestamped_steps["observations"].shape[0] - 1)
+      inicio = random.randint(0, max_ep_len - 1)
       #step =timestamped_steps[inicio:max_length]
       #We feed  max_length timesteps into Decision Transformer, for a total of 3*max_length tokens 
       trajectory_lenght=timestamped_steps["observations"][inicio:inicio+max_length].shape[0]
@@ -408,10 +438,10 @@ def get_batch(batch_size=64, max_len=max_length):
       state_dim=obsBatch[-1].shape[1]#shape of obs encoding
      
       obsBatch[-1] = np.concatenate([np.zeros((max_len - trajectory_lenght, state_dim)), obsBatch[-1]], axis=0)
-      if DISCRETE_ACTIONS:
-            actionBatch[-1] = np.concatenate([np.ones(max_len - trajectory_lenght) * -10., actionBatch[-1]], axis=0)
+      if DISCRETE_ACTIONS:#TODo maybe move this diference to a reshape , leave this as the non discrete version and unsqueeze on the other side 
+            actionBatch[-1] = np.concatenate([np.ones(max_len - trajectory_lenght), actionBatch[-1]], axis=0)#TODO *-10 mask or =?
       else:
-            actionBatch[-1] = np.concatenate([np.ones(( max_len - trajectory_lenght, act_dim)) * -10., actionBatch[-1]], axis=0)
+            actionBatch[-1] = np.concatenate([np.ones(( max_len - trajectory_lenght, act_dim)) , actionBatch[-1]], axis=0)
       if DISCRETE_REWARDS:
             rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - trajectory_lenght)), rewardsBatch[-1]], axis=0)
       else:
@@ -446,14 +476,9 @@ def get_batch(batch_size=64, max_len=max_length):
         return obsBatch,actionBatch,rewardsBatch,doneBatch ,rtgBatch,timesteps,mask
     '''
     obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)#change to int only if discrete actions
-    actionBatch = th.tensor(actionBatch).to(dtype=th.int32, device=device)
-    if DISCRETE_REWARDS:#TODO maybe change to chooseing dtype for better redeablity
-        rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.int32, device=device)
-    else:
-        rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
-    
-    doneBatch = th.tensor(doneBatch).to(dtype=th.long, device=device)
-    rtgBatch = th.tensor(rtgBatch).to(dtype=th.int32, device=device)
+    actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
+    rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
+    rtgBatch = th.tensor(rtgBatch).to(dtype=th.float32, device=device)   
     timesteps = th.tensor(timesteps).to(dtype=th.long, device=device)
     mask = th.tensor(mask).to(device=device)
     #mask=th.tensor(mask).to(device=device)
@@ -465,9 +490,9 @@ print("batch")
 #timesteps[-1][timesteps[-1] >= max_ep_len] = max_ep_len-1  # padding cutoff
 #????????
 
-warmup_steps=1
+warmup_steps=100
 num_eval_episodes=1
-env_targets = [547]#target rewards for
+env_targets = [1571,547]#target rewards for
 
 scheduler = th.optim.lr_scheduler.LambdaLR(
         optimizer,
@@ -519,17 +544,19 @@ trainer = seq_trainer.SequenceTrainer(
             loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: th.mean((a_hat - a)**2),
             eval_fns=[eval_episodes(tar) for tar in env_targets],#eval model for each target reward
         )
-def save(epoch,checkpoint_file):
+def save(epoch,checkpoint_file):#TODO maybe merge whith kmeans
         th.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict()
+            'optimizer_state_dict': optimizer.state_dict(),
             },checkpoint_file)
 def load(validation_data=None):
             checkpoint = th.load(checkpoint_file)
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-checkpoint_file ="./models/"+TRAIN_MODEL_NAME
+    
+
+
 if os.path.exists(checkpoint_file):
     print("loading save")
     load()
