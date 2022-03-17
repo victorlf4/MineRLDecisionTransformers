@@ -21,6 +21,9 @@ class DecisionTransformer(nn.Module):
             max_length=None,
             max_ep_len=4096,
             action_tanh=True,
+            discrete_rewards=1095,
+            discrete_actions=100,#number of actions the agent can take, none to use continuous actions
+            discrete_states=65536,
             **kwargs
     ):
         super().__init__()
@@ -29,7 +32,10 @@ class DecisionTransformer(nn.Module):
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.max_length = max_length
-
+        self.discrete_rewards=discrete_rewards
+        self.discrete_actions=discrete_actions
+        self.discrete_states=discrete_states
+        
         config = transformers.GPT2Config(
             vocab_size=1,  # doesn't matter -- we don't use the vocab
             n_embd=hidden_size,
@@ -39,14 +45,35 @@ class DecisionTransformer(nn.Module):
         # note: the only difference between this GPT2Model and the default Huggingface version
         # is that the positional embeddings are removed (since we'll add those ourselves)
         self.transformer = GPT2Model(config)
+        
+        self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
 
+        
+        if discrete_rewards is not None:#TODO add some form of reward tokenizer for the embedding.
+            self.embed_return = nn.Embedding(discrete_rewards, hidden_size)#TODO check if we can make the reward a single token.
+        else:
+            self.embed_return = torch.nn.Linear(1, hidden_size)
+
+        if discrete_actions is not None:
+            self.embed_action =  nn.Embedding(discrete_actions, hidden_size)
+        else:
+            self.embed_action = torch.nn.Linear(self.act_dim, hidden_size)
+
+        if discrete_states is not None:
+            self.embed_state = lambda x: x #just returns the state unchanged
+
+        else:
+            self.embed_state = torch.nn.Linear(self.state_dim, hidden_size)
+        
+        
+        '''
         self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
         self.embed_return = torch.nn.Linear(1, hidden_size)
         self.embed_state = torch.nn.Linear(self.state_dim, hidden_size)
         self.embed_action = torch.nn.Linear(self.act_dim, hidden_size)
-
+         '''
         self.embed_ln = nn.LayerNorm(hidden_size)
-
+        
         # note: we don't predict states or returns for the paper
         self.predict_state = torch.nn.Linear(hidden_size, self.state_dim)
         self.predict_action = nn.Sequential(
@@ -61,23 +88,24 @@ class DecisionTransformer(nn.Module):
         if attention_mask is None:
             # attention mask for GPT: 1 if can be attended to, 0 if not
             attention_mask = torch.ones((batch_size, seq_length), dtype=torch.long)
+        if self.discrete_rewards is not None:    
+            returns_to_go=returns_to_go.to(dtype=torch.long)
+        if self.discrete_actions is not None:    
+            actions=actions.to(dtype=torch.long)
 
         # embed each modality with a different head
-        state_embeddings = self.embed_state(states)#test, reemplazar por valor
+        state_embeddings = self.embed_state(states)
         action_embeddings = self.embed_action(actions)
+        #print(returns_to_go.shape)
         returns_embeddings = self.embed_return(returns_to_go)
         time_embeddings = self.embed_timestep(timesteps)
-
         # time embeddings are treated similar to positional embeddings
         state_embeddings = state_embeddings + time_embeddings
         action_embeddings = action_embeddings + time_embeddings
         returns_embeddings = returns_embeddings + time_embeddings
-
+        
         # this makes the sequence look like (R_1, s_1, a_1, R_2, s_2, a_2, ...)
         # which works nice in an autoregressive sense since states predict actions
-       # returns_embeddings=returns_embeddings.unsqueeze(0)#!!!!añadido por no hacerlo antes 
-        #state_embeddings=state_embeddings.unsqueeze(0)
-        #action_embeddings=action_embeddings.unsqueeze(0)
         stacked_inputs = torch.stack(
             (returns_embeddings, state_embeddings, action_embeddings), dim=1
         ).permute(0, 2, 1, 3).reshape(batch_size, 3*seq_length, self.hidden_size)
@@ -107,10 +135,19 @@ class DecisionTransformer(nn.Module):
         return state_preds, action_preds, return_preds
 
     def get_action(self, states, actions, rewards, returns_to_go, timesteps, **kwargs):
-        # we don't care about the past rewards in this modelmodel
+        # we don't care about the past rewards in this model
+        
 
+
+        #states = states.reshape(1, -1, self.state_dim) TODO make it work when no vq_vqvae
+        #states = states.reshape(1, -1)
         states = states.reshape(1, -1, self.state_dim)
-        actions = actions.reshape(1, -1, self.act_dim)
+        if self.discrete_actions is not None:
+            actions = actions.reshape(1, -1)
+        else:   
+            actions = actions.reshape(1, -1, self.act_dim)
+           
+
         returns_to_go = returns_to_go.reshape(1, -1, 1)
         timesteps = timesteps.reshape(1, -1)
 
@@ -119,17 +156,24 @@ class DecisionTransformer(nn.Module):
             actions = actions[:,-self.max_length:]
             returns_to_go = returns_to_go[:,-self.max_length:]
             timesteps = timesteps[:,-self.max_length:]
-
+            
             # pad all tokens to sequence length
             attention_mask = torch.cat([torch.zeros(self.max_length-states.shape[1]), torch.ones(states.shape[1])])
             attention_mask = attention_mask.to(dtype=torch.long, device=states.device).reshape(1, -1)
             states = torch.cat(
                 [torch.zeros((states.shape[0], self.max_length-states.shape[1], self.state_dim), device=states.device), states],
                 dim=1).to(dtype=torch.float32)
-            actions = torch.cat(
-                [torch.zeros((actions.shape[0], self.max_length - actions.shape[1], self.act_dim),
-                             device=actions.device), actions],
-                dim=1).to(dtype=torch.float32)
+            if self.discrete_actions is not None:
+                actions = torch.cat(
+                    [torch.zeros((actions.shape[0], self.max_length - actions.shape[1]),
+                                device=actions.device), actions],
+                    dim=1).to(dtype=torch.float32)
+            else:
+                actions = torch.cat(
+                    [torch.zeros((actions.shape[0], self.max_length - actions.shape[1], self.act_dim),
+                                device=actions.device), actions],
+                    dim=1).to(dtype=torch.float32)
+            
             returns_to_go = torch.cat(
                 [torch.zeros((returns_to_go.shape[0], self.max_length-returns_to_go.shape[1], 1), device=returns_to_go.device), returns_to_go],
                 dim=1).to(dtype=torch.float32)
@@ -139,7 +183,6 @@ class DecisionTransformer(nn.Module):
             ).to(dtype=torch.long)
         else:
             attention_mask = None
-
         _, action_preds, return_preds = self.forward(
             states, actions, None, returns_to_go, timesteps, attention_mask=attention_mask, **kwargs)
 

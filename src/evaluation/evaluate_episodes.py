@@ -113,8 +113,15 @@ def evaluate_episode_rtg(
         actions = torch.cat([actions, torch.zeros((1, act_dim), device=device)], dim=0)
         rewards = torch.cat([rewards, torch.zeros(1, device=device)])
 
+        '''action = model.get_action(
+            (states.to(dtype=torch.float32) - state_mean) / state_std,#TODO make this only happen in original dt mode
+            actions.to(dtype=torch.float32),
+            rewards.to(dtype=torch.float32),
+            target_return.to(dtype=torch.float32),
+            timesteps.to(dtype=torch.long),
+        )'''
         action = model.get_action(
-            (states.to(dtype=torch.float32) - state_mean) / state_std,
+            (states.to(dtype=torch.float32)),
             actions.to(dtype=torch.float32),
             rewards.to(dtype=torch.float32),
             target_return.to(dtype=torch.float32),

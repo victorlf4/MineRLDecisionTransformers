@@ -41,22 +41,15 @@ class VectorQuantizerEMA(nn.Module):
         # Flatten input
         flat_input = inputs.view(-1, self._embedding_dim)
 
-        
-        
         # Calculate distances
         distances = torch.cdist(flat_input,self._embedding.weight)
         
-       
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
         encodings = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
         encodings.scatter_(1, encoding_indices, 1)
-        #print(flat_input.shape)
-        #print(self._embedding.weight.t().shape)
-        #print(distances.shape)
         # Quantize and unflatten
         quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
-        #print(quantized.shape)
         # Use EMA to update the embedding vectors
         if self.training:
             self._ema_cluster_size = self._ema_cluster_size * self._decay + \
@@ -126,7 +119,7 @@ class VectorQuantizer(nn.Module):
         q_latent_loss = F.mse_loss(quantized, inputs.detach())
         loss = q_latent_loss + self._commitment_cost * e_latent_loss
 
-        #hack to pass through the gradient of the imput part since the encode and quantize part is not diferenciable
+        #Straight Through Estimator of the qunatization(since its not diferenciable)
         quantized = inputs + (quantized - inputs).detach()
 
         avg_probs = torch.mean(encodings, dim=0)

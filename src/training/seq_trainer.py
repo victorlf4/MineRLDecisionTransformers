@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from Model.trainer import Trainer
+from training.trainer import Trainer
 
 
 class SequenceTrainer(Trainer):
