@@ -19,7 +19,7 @@ class DecisionTransformer(nn.Module):
             act_dim,
             hidden_size,
             max_length=None,
-            max_ep_len=4096,
+            max_ep_len=18000,
             action_tanh=True,
             discrete_rewards=1095,
             discrete_actions=100,#number of actions the agent can take, none to use continuous actions
@@ -66,12 +66,6 @@ class DecisionTransformer(nn.Module):
             self.embed_state = torch.nn.Linear(self.state_dim, hidden_size)
         
         
-        '''
-        self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
-        self.embed_return = torch.nn.Linear(1, hidden_size)
-        self.embed_state = torch.nn.Linear(self.state_dim, hidden_size)
-        self.embed_action = torch.nn.Linear(self.act_dim, hidden_size)
-         '''
         self.embed_ln = nn.LayerNorm(hidden_size)
         
         # note: we don't predict states or returns for the paper
