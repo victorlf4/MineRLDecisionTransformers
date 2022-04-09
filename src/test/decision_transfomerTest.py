@@ -7,6 +7,7 @@ import gym
 import minerl
 from sklearn.cluster import KMeans
 from torch.utils.data.dataset import IterableDataset
+from Model import decision_transformer
 from  Model.vq_vae import VectorQuantizerVAE as vaeq
 import os
 import wandb
@@ -326,7 +327,7 @@ print(trajectory_actions)
 '''
 print("data augmented")
 #decision transformer part
-from Model import decision_transformer,decision_transformer_modified ,seq_trainer
+from Model import decision_transformer,seq_trainer
 if DISCRETE_ACTIONS:
     act_dim=1
 else:
@@ -371,7 +372,7 @@ model = decision_transformer.DecisionTransformer(
 
 '''
 
-model = decision_transformer_modified.DecisionTransformer(
+model = decision_transformer.DecisionTransformer(
             state_dim=obs_dim,
             act_dim=act_dim,
             max_length=max_length,

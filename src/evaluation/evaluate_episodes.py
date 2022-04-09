@@ -1,9 +1,9 @@
 
 import numpy as np
 import torch
-def tokenize_image(tokenizerModel,obs):
+def tokenize_image(tokenizerModel,obs,device):
     obs= obs.transpose(2, 0, 1)
-    return tokenizerModel.encodeSingle(torch.tensor(obs,dtype=torch.float32))
+    return tokenizerModel.encodeSingle(torch.tensor(obs,dtype=torch.float32).to(device).div(256))
 
 
 def evaluate_episode_rtg(
@@ -20,6 +20,7 @@ def evaluate_episode_rtg(
         device='cuda',
         target_return=None,
         mode='normal',
+        visualize=False
     ):
 
     model.eval()
@@ -29,13 +30,16 @@ def evaluate_episode_rtg(
     state_std = torch.from_numpy(state_std).to(device=device)
 
     state = env.reset()
-    state=tokenize_image(vq_vae,state["pov"])#TODO only if vq_vae
+    if vq_vae:
+        state=tokenize_image(vq_vae,state["pov"],device)
+    else:
+        state=torch.tensor(state["pov"]).to(device).div(256)
     if mode == 'noise':
         state = state + np.random.normal(0, 0.1, size=state.shape)
     
     # we keep all the histories on the device
     # note that the latest action and reward will be "padding"
-    states = state.reshape(1, state_dim).to(device=device, dtype=torch.float32)
+    states = state.reshape((1,)+ state_dim).to(device=device, dtype=torch.float32)
     actions = torch.zeros((0, act_dim), device=device, dtype=torch.float32)
     rewards = torch.zeros(0, device=device, dtype=torch.float32)
 
@@ -66,16 +70,21 @@ def evaluate_episode_rtg(
             target_return.to(dtype=torch.float32),
             timesteps.to(dtype=torch.long),
         )
+        #vae_model.eval(iter((th.tensor(states,dtype=th.float32).div(256),)))#TODO erase test
         actions[-1] = action
         action = action.detach().cpu().numpy()
         if action_centroids is not None:#if we are using kmeans
             action = action_centroids[np.around(action).astype(np.uint64)][0]#[0] because otherwise its a 2d array for some reason
         action = {"vector": action}
         state, reward, done, _ = env.step(action)
-        env.render(mode='human')
-        state=state=tokenize_image(vq_vae,state["pov"])#tokenize observation whith vq_vae
-        
-        cur_state = state.reshape(1, state_dim)
+        if visualize:
+            env.render(mode='human')
+        if vq_vae:
+            state=tokenize_image(vq_vae,state["pov"],device)#tokenize observation whith vq_vae
+        else:
+            state=torch.tensor(state["pov"]).to(device).div(256)
+            
+        cur_state = state.reshape((1,)+ state_dim)
         states = torch.cat([states, cur_state], dim=0)
         rewards[-1] = reward
 

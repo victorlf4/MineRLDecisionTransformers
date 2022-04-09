@@ -1,3 +1,4 @@
+from pickle import TRUE
 import random
 import numpy as np
 import torch as th
@@ -13,15 +14,18 @@ import argparse
 from Model.decision_transformer import DecisionTransformer
 from training.seq_trainer import SequenceTrainer
 from evaluation.evaluate_episodes import evaluate_episode_rtg
-from copy import deepcopy
-
-BATCH_SIZE = 32
-NUM_ACTION_CENTROIDS = 100  # Number of KMeans centroids used to cluster the data.
-
+from evaluation.evaluate_validation import evaluate_validation_rtg
+from gym.wrappers import Monitor
+from minerl.herobraine.wrappers.video_recording_wrapper import VideoRecordingWrapper
+from utils.verify_or_download_minerl import verify_or_download_dataset
+from utils.minerl_encode_sequence import minerlEncodeSequence
 
 #TODO maybe try things like t-SNE and UMAP or other way of reemplacing vae?
 #TODO add some way to run an unmodified dt for baseline
-
+#TODO add optional convnet when not quantized, + maybe vq_vae convnet option although that makes less sense)
+#TODO change action dictionary to a vector in basalt envs
+#TODO propagate gradients througth frozen vq_vae
+#TODO add the option to not condition on rewards to get typical
 def reward2go(rewards):
                 rewards2go=[]
                 remainingR=sum(rewards)
@@ -43,52 +47,67 @@ def calculate_rewards2go(trajectories):
                 dataset_rewards2go.append(reward2go(rewards))
         return dataset_rewards2go
 
-
-
-
-
 def main(parameters
 ):              
         #loading parameters
-        use_checkpoint=parameters['checkpoint']
+        use_checkpoint=parameters['use_checkpoint']
         batch_size = parameters['batch_size']#TODO check if it needs to be get 
         num_eval_episodes = parameters['num_eval_episodes']
         discrete_actions = parameters['kmeans_actions']
+        kmeans_action_centroids=parameters['kmeans_action_centroids']
         discrete_rewards =parameters['discrete_rewards']
+        discrete_pov =parameters['discrete_pov']
+        vectorize_actions=parameters['vectorize_actions']
+        if discrete_pov:
+                discrete_states=parameters["vae_embedings"]
+        else:
+                discrete_states=None
+
         log_to_wandb=parameters['log_to_wandb']
         max_length=parameters['K']
         max_ep_len=parameters['max_ep_len']
         max_ep_len_dataset=parameters['max_ep_len_dataset']
-        
+        buffer_target_size=parameters['buffer_target_size']
+        buffer_target_size_validation=parameters['buffer_target_size_validation']
+        warmup_steps = parameters['warmup_steps']
+        visualize=parameters['visualize']
         
         num_steps_per_iter=parameters['num_steps_per_iter']
         max_iters=parameters['max_iters']
         checkpoint_file ="./models/"+parameters['checkpoint_name']
         mode = parameters['checkpoint_name']
-        env_targets = [1571,547]#target rewards for #TODO make them params
+        #env_targets = [1571,547]#target rewards for #TODO make them params
+        env_targets = [64]#target rewards for #TODO make them params
+        if discrete_pov:
+                state_dim=256*parameters["vae_embedding_dim"] #TODO actually figure out why its 256 
+        else:
+                state_dim=(3,64,64) 
+                
         if parameters['device']=="cuda":
                 device = th.device("cuda" if th.cuda.is_available() else "cpu")#TODO send a message when cuda is not avaliable
         else:#TODO send a warning instead and ask for explicitly device name
-                device = th.device("cpu")#TODO fix not using cuda breaking things in dt   
-        vae_model=vaeq(parameters["vae_model"],embedding_dim = parameters["vae_embedding_dim"],num_embeddings =parameters["vae_embedings"],batch_size=16)
+                device = th.device("cpu")  
+        if discrete_pov:
+                vae_model=vaeq(parameters["vae_model"],embedding_dim = parameters["vae_embedding_dim"],num_embeddings =parameters["vae_embedings"],device_name=parameters["device"],batch_size=16)
+                vae_model.load()
+        else:
+                vae_model=None
         #Load minecraft env and dataset
-        minerl.data.download(directory='data', environment=parameters["dataset"])#TODO codigo de baselines competition
+        verify_or_download_dataset(directory='data', environment=parameters["dataset"])#TODO codigo de baselines competition para solo intentar descarbgar si no existe
         data = minerl.data.make(parameters["dataset"],  data_dir='data', num_workers=1)
-        env = gym.make(parameters["env"])
-        #Load trajectories
-        trajectory_names = data.get_trajectory_names()
-        random.shuffle(trajectory_names)
-        trajectories_dataset= []
-        for name in trajectory_names:
-                trajectories_dataset.append(data.load_data(name))#TODO, check and ask whether these do anything , skip_interval=0, include_metadata=False
-        dataset_rewards2go=calculate_rewards2go(trajectories_dataset)#We precalculate all the rewards2go for the dataset
-        print("rewards to go mean:")
-        print(np.mean(np.max(dataset_rewards2go),axis=0))
-        print(np.max(np.max(dataset_rewards2go),axis=0))
-        #print(np.max(dataset_rewards2go,axis=0))#TODO get results to make sense
-        state_dim=256*parameters["vae_embedding_dim"] #TODO actually figure out why its 256 
-        
-        
+        def load_env(env_name):
+                enviroment = gym.make(env_name)
+                if vectorize_actions:
+                        enviroment=minerl.herobraine.wrappers.Vectorized(enviroment)
+                if parameters['record']:
+                        enviroment=Monitor(env,"./video",force=True)#TODO fix some bugs whith not doing the steps at the same time
+                return enviroment
+        env=load_env(parameters["env"])
+
+        #Load validation data
+        verify_or_download_dataset(directory='data', environment=parameters["dataset_validation"])#TODO mallow to divide minerl diamond instead or use a custom dataset or minecraft run.
+        data_validation = minerl.data.make(parameters["dataset_validation"],  data_dir='data', num_workers=1)
+
         def save_kmeans():#TODO maybe move small functions like this to an utils file
                 th.save({
                         'action_centroids': action_centroids,
@@ -100,13 +119,14 @@ def main(parameters
                 return action_centroids
 
         if discrete_actions:#TODO refactor this somehow
+                #TODO load trajectories here
                 act_dim=1
-                num_action_centroids=NUM_ACTION_CENTROIDS
+                num_action_centroids=kmeans_action_centroids
                 if os.path.exists(checkpoint_file+"_kmeans"):
                         action_centroids=load_kmeans()
                 else:
                         print("Running KMeans on the action vectors")
-                        kmeans = KMeans(n_clusters=NUM_ACTION_CENTROIDS)
+                        kmeans = KMeans(n_clusters=kmeans_action_centroids)
                         kmeans.fit(all_actions)
                         action_centroids = kmeans.cluster_centers_
                         print("KMeans done")
@@ -116,58 +136,16 @@ def main(parameters
                 num_action_centroids=None
                 action_centroids=None
 
-        #TODO check whether time embeddings are really necesary as oposed to some in sequence position embedding.
-        def minerlEncode(trajectory,index,traj_slice):#TODO maybe do this in a diferent file or do it separately and store in a file?
-                sequence_actions = []
-                sequence_pov_obs = []
-                sequence_rewards = []
-                sequence_dones = []
-                
-                for dataset_observation, dataset_action, dataset_reward, _, done in trajectory:
-                        sequence_actions.append(dataset_action["vector"])
 
-                        data_obs= dataset_observation["pov"].transpose(2, 0, 1)
-                        obs_encoding_tensor=vae_model.quantizeSingle(th.tensor(data_obs,dtype=th.float32)).flatten()#encode or quantize?
-                        sequence_pov_obs.append(obs_encoding_tensor.cpu().t())
-
-                        sequence_rewards.append(dataset_reward)
-                        sequence_dones.append(done)
-
-                sequence_actions = np.array(sequence_actions)
-                sequence_pov_obs = th.stack(sequence_pov_obs)
-                sequence_rewards = np.array(sequence_rewards)
-                sequence_rewards2go=dataset_rewards2go[index][traj_slice]#TODO convertir en tensor directamente en el original
-
-                sequence_rewards=th.from_numpy(sequence_rewards)#TODO use convert_to_tensor directamente instead
-                sequence_rewards2go=th.tensor(sequence_rewards2go)
-                sequence_actions=th.from_numpy(sequence_actions)
-
-                if discrete_rewards is not True:
-                        sequence_rewards=th.unsqueeze(sequence_rewards,1)
-                        sequence_rewards2go=th.unsqueeze(sequence_rewards2go,1)
-                sequence_dones = np.array(sequence_dones)
-                trajectory ={
-                "observations": sequence_pov_obs,
-                "actions": sequence_actions,
-                "rewards": sequence_rewards,
-                "done": sequence_dones,
-                "rewards2go": sequence_rewards2go,
-                }
-                return trajectory
-
-                
         
-        '''
-        def test_load_trajectories(n):
-                loadedTrajectories=[]
-                for i in range(n):
-                        trajectory_name=trajectory_names[i] 
-                        trajectory=  data.load_data(trajectory_name, skip_interval=0, include_metadata=False)     
-                        loadedTrajectories.append(list(trajectory))
-                return loadedTrajectories
-        #loadedTrajectories=test_load_trajectories(5)#TODO! erase after test
-        ''''''
-        def get_batch_test_load_memory(batch_size=64, max_len=max_length):#original version where we donload certain trajectories to memoryh
+
+        from utils.buffer_trajectory_load import BufferedTrajectoryIter
+        trajectory_buffer=BufferedTrajectoryIter(data,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
+        trajectory_buffer_iter=trajectory_buffer.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters)+warmup_steps)
+        
+        trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset)#TODO make buffer target size parameter
+        trajectory_buffer_iter_validation=trajectory_buffer_validation.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters))#TODO make this dependent on num of validation iterations
+        def get_batch(batch_size=64, max_len=max_length, validation=False):#version where we sample each batch from each trajectory
                 obsBatch=[]
                 actionBatch=[]
                 rewardsBatch=[]
@@ -175,40 +153,42 @@ def main(parameters
                 rtgBatch=[]
                 timesteps=[]
                 mask =[]
-
-                for i in range(batch_size):
-                        trajectory_index =random.randint(0,len(loadedTrajectories)-1)#TODO maybe do this whith a generator(using yield)
-                        trajectory=loadedTrajectories[trajectory_index]
-                        inicio = random.randint(0,min(len(trajectory)-2,max_ep_len_dataset))
-
-                        sequence=minerlEncode(trajectory[inicio:inicio+max_length],trajectory_index,slice(inicio,inicio+max_length))
-                        #step =trajectory[inicio:max_length]
-                        #We feed  max_length timesteps into Decision Transformer, for a total of 3*max_length tokens 
-                        sequence_lenght=sequence["observations"].shape[0]
-                        obsBatch.append(sequence["observations"])
-                        actionBatch.append(sequence["actions"])
-                        rewardsBatch.append(sequence["rewards"])
-                        doneBatch.append(sequence["done"])
-                        rtgBatch.append(sequence["rewards2go"])
-                        timesteps.append(range(inicio,min(inicio+max_length,len(trajectory))))
-                        state_dim=obsBatch[-1].shape[1]#shape of obs encoding
-                        
-                        obsBatch[-1] = np.concatenate([np.zeros((max_len - sequence_lenght, state_dim)), obsBatch[-1]], axis=0)
-                        if discrete_actions:#TODo maybe move this diference to a reshape , leave this as the non discrete version and unsqueeze on the other side 
-                                actionBatch[-1] = np.concatenate([np.zeros(max_len - sequence_lenght), actionBatch[-1]], axis=0)#TODO *-10 mask or =?
-                        else:
-                                actionBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , actionBatch[-1]], axis=0)
-                        if discrete_rewards:
-                                rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rewardsBatch[-1]], axis=0)
-                        else:
-                                rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rewardsBatch[-1]], axis=0)
-                        doneBatch[-1] = np.concatenate([np.ones(( max_len - sequence_lenght)) * 2, doneBatch[-1]], axis=0)#adds 2 as padding ? maybe so its not 1 or 0
-                        if discrete_rewards:
-                                rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rtgBatch[-1]], axis=0)
-                        else:
-                                rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rtgBatch[-1]], axis=0)
-                        timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
-                        mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
+                if validation:
+                         trajectory_batch=next(trajectory_buffer_iter_validation)
+                else:
+                        trajectory_batch=next(trajectory_buffer_iter)
+                for trajectory in trajectory_batch:
+                                sequence=minerlEncodeSequence(trajectory,device,discrete_rewards=discrete_rewards,vae_model=vae_model)
+                                #We feed  max_length timesteps into Decision Transformer, for a total of 3*max_length tokens 
+                                sequence_lenght=sequence["observations"].shape[0]
+                                obsBatch.append(sequence["observations"])
+                                actionBatch.append(sequence["actions"])
+                                rewardsBatch.append(sequence["rewards"])
+                                doneBatch.append(sequence["done"])
+                                rtgBatch.append(sequence["rewards2go"])
+                                timesteps.append(sequence["timesteps"])
+                                if discrete_pov:
+                                        state_dim=(obsBatch[-1].shape[1],)#shape of obs encoding
+                                else:
+                                        state_dim=(obsBatch[-1].shape[1],obsBatch[-1].shape[2],obsBatch[-1].shape[3])#shape of images
+                                
+              
+                                obsBatch[-1] = np.concatenate([np.zeros((max_len - sequence_lenght,)+state_dim), obsBatch[-1]], axis=0)#+concantenates tuples here
+                                if discrete_actions:#TODO maybe move this diference to a reshape , leave this as the non discrete version and unsqueeze on the other side 
+                                        actionBatch[-1] = np.concatenate([np.zeros(max_len - sequence_lenght), actionBatch[-1]], axis=0)#TODO *-10 mask or =?
+                                else:
+                                        actionBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , actionBatch[-1]], axis=0)
+                                if discrete_rewards:
+                                        rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rewardsBatch[-1]], axis=0)
+                                else:
+                                        rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rewardsBatch[-1]], axis=0)
+                                doneBatch[-1] = np.concatenate([np.ones(( max_len - sequence_lenght)) * 2, doneBatch[-1]], axis=0)
+                                if discrete_rewards:
+                                        rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rtgBatch[-1]], axis=0)
+                                else:
+                                        rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rtgBatch[-1]], axis=0)
+                                timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
+                                mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
                 obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)#change to int only if discrete actions
                 actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
                 rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
@@ -216,57 +196,6 @@ def main(parameters
                 timesteps = th.tensor(timesteps).to(dtype=th.long, device=device)
                 mask = th.tensor(mask).to(device=device)
                 return obsBatch,actionBatch,rewardsBatch,doneBatch ,rtgBatch,timesteps,mask
-        '''  
-        def get_batch(batch_size=64, max_len=max_length):#version where we sample each batch from each trajectpry
-                obsBatch=[]
-                actionBatch=[]
-                rewardsBatch=[]
-                doneBatch=[]
-                rtgBatch=[]
-                timesteps=[]
-                mask =[]
-                trajectory_index =random.randint(0,len(trajectory_names)-1)#TODO maybe do this whith a generator(using yield)
-                trajectory_name=trajectory_names[trajectory_index]
-                trajectory = data.load_data(trajectory_name, skip_interval=0, include_metadata=False)
-                trajectory=list(trajectory)#load the trajectory from generator
-                for i in range(batch_size):     
-                        inicio = random.randint(0,min(len(trajectory)-2,max_ep_len_dataset))
-                        sequence=minerlEncode(trajectory[inicio:inicio+max_length],trajectory_index,slice(inicio,inicio+max_length))
-                        #step =trajectory[inicio:max_length]
-                        #We feed  max_length timesteps into Decision Transformer, for a total of 3*max_length tokens 
-                        sequence_lenght=sequence["observations"].shape[0]
-                        obsBatch.append(sequence["observations"])
-                        actionBatch.append(sequence["actions"])
-                        rewardsBatch.append(sequence["rewards"])
-                        doneBatch.append(sequence["done"])
-                        rtgBatch.append(sequence["rewards2go"])
-                        timesteps.append(range(inicio,min(inicio+max_length,len(trajectory))))
-                        state_dim=obsBatch[-1].shape[1]#shape of obs encoding
-                        
-                        obsBatch[-1] = np.concatenate([np.zeros((max_len - sequence_lenght, state_dim)), obsBatch[-1]], axis=0)
-                        if discrete_actions:#TODo maybe move this diference to a reshape , leave this as the non discrete version and unsqueeze on the other side 
-                                actionBatch[-1] = np.concatenate([np.zeros(max_len - sequence_lenght), actionBatch[-1]], axis=0)#TODO *-10 mask or =?
-                        else:
-                                actionBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , actionBatch[-1]], axis=0)
-                        if discrete_rewards:
-                                rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rewardsBatch[-1]], axis=0)
-                        else:
-                                rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rewardsBatch[-1]], axis=0)
-                        doneBatch[-1] = np.concatenate([np.ones(( max_len - sequence_lenght)) * 2, doneBatch[-1]], axis=0)#adds 2 as padding ? maybe so its not 1 or 0
-                        if discrete_rewards:
-                                rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rtgBatch[-1]], axis=0)
-                        else:
-                                rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rtgBatch[-1]], axis=0)
-                        timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
-                        mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
-                obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)#change to int only if discrete actions
-                actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
-                rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
-                rtgBatch = th.tensor(rtgBatch).to(dtype=th.float32, device=device)   
-                timesteps = th.tensor(timesteps).to(dtype=th.long, device=device)
-                mask = th.tensor(mask).to(device=device)
-                return obsBatch,actionBatch,rewardsBatch,doneBatch ,rtgBatch,timesteps,mask
-
         
         model = DecisionTransformer(
             state_dim=state_dim,
@@ -275,7 +204,7 @@ def main(parameters
             max_ep_len=max_ep_len_dataset,#diferent from max_ep_len because theres a bug where the dataset has trajectories bigger than the maximun episode lenght of the enviroment
             discrete_rewards=None,#TODO actually add this in case of discrete rewards #1095,#1095 is the number of posible reward combinations in the minerl enviroment, though most are very unlikel
             discrete_actions=num_action_centroids,
-            discrete_states=parameters["vae_embedings"],
+            discrete_states=discrete_states,
             hidden_size=parameters['embed_dim'],
             n_layer=parameters['n_layer'],
             n_head=parameters['n_head'],
@@ -286,8 +215,6 @@ def main(parameters
             attn_pdrop=parameters['dropout'],
             natureCNN=parameters['convolution_head'])
         model = model.to(device=device)
-
-        warmup_steps = parameters['warmup_steps']
 
         optimizer = th.optim.AdamW(
         model.parameters(),
@@ -314,6 +241,7 @@ def main(parameters
                                                 target_return=target_rew/1,
                                                 mode=mode,
                                                 device=device,
+                                                visualize=visualize
                                                 )
                                 returns.append(ret)
                                 lengths.append(length)
@@ -322,10 +250,38 @@ def main(parameters
                                 f'target_{target_rew}_return_std': np.std(returns),
                                 f'target_{target_rew}_return_max': np.max(returns),
                                 f'target_{target_rew}_length_mean': np.mean(lengths),
-                                f'target_{target_rew}_length_std': np.std(lengths),
+                                f'target_{target_rew}_length_std': np.std(lengths),#TODO maybe erase because they arent really useful for minerl
                         }
                 return fn
-                
+        def validation_fn(model):
+                        returns = []
+                        for _ in range(num_eval_episodes):#TODO change to validation
+                                with th.no_grad(): 
+                                        ret=evaluate_validation_rtg(
+                                        env,
+                                        state_dim,
+                                        act_dim,
+                                        model,
+                                        get_batch,#TODO change to get batch validation
+                                        batch_size,
+                                        loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: th.mean((a_hat - a)**2),
+                                        action_centroids=None,#if we are using kmeans
+                                        validation_batches=10,
+                                        scale=1.,
+                                        state_mean=np.zeros(1),#TODO send the actual mean here when not using vq_vae
+                                        state_std=np.zeros(1),#TODO send the actual std here when not using vq_vae
+                                        device='cuda',
+                                        mode='normal',
+                                        
+                                        )
+                                returns.append(ret)
+
+                        return {
+                                f'loss_mean': np.mean(returns),
+                                f'loss_std': np.std(returns)
+                        }
+        
+
         trainer = SequenceTrainer(
             model=model,
             optimizer=optimizer,
@@ -334,14 +290,14 @@ def main(parameters
             scheduler=scheduler,
             loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: th.mean((a_hat - a)**2),
             eval_fns=[eval_episodes(tar) for tar in env_targets],
+            validation_fn=validation_fn
         )
         if log_to_wandb:#TODO add a way to add experiment group and name as parameters(maybe already in original paper?)
                 wandb.init(
-            name=f'Initial_test_refactor-{random.randint(int(1e5), int(1e6) - 1)}',
-            group="Initial_test_refactor",
-            project='decision-transformer_TFM',
-            config=parameters
-                )
+                        name=f'{parameters["group_name"]}-{random.randint(int(1e5), int(1e6) - 1)}',
+                        group=parameters["group_name"],
+                        project='decision-transformer_TFM',
+                        config=parameters)
 
         def save(epoch,checkpoint_file):#TODO maybe merge whith kmeans
                 th.save({
@@ -357,14 +313,15 @@ def main(parameters
 
 
         if os.path.exists(checkpoint_file) and use_checkpoint:
-                print("loading save")
+                print("Loading saved decision transformer model")#TODO make it so weight and biases continues in the same run if possible
                 load()
 
 
-        for iter in range(max_iters):
-                outputs = trainer.train_iteration(num_steps=num_steps_per_iter, iter_num=iter+1, print_logs=True)#TODO!  make it so there are 10 normal vbalidation steps folowed by a rl validation step
+        for iteration in range(max_iters):
+                validate = iteration%parameters["num_validation_iters"] == 0 and iteration != 0:#TODO change to validation_steps param
+                outputs = trainer.train_iteration(num_steps=num_steps_per_iter, iter_num=iteration+1, print_logs=True,validation=validate)
                 if(use_checkpoint):#TODO make a separate variable for saving checkpoints to use checkpoint whithout saving
-                        save(iter,checkpoint_file)
+                        save(iteration,checkpoint_file)
                 if log_to_wandb:
                         wandb.log(outputs)
 
@@ -372,13 +329,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     #TODO add warnings for wrong parameters.check whether it can be done whith argparse
     parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0')
-    parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')  # medium, medium-replay, medium-expert, expert
+    parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')
+    parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0')
+    parser.add_argument('--vectorize_actions' , type=bool, default=False)
+    parser.add_argument('--visualize' , type=bool, default=False)
+    parser.add_argument('--record' , type=bool, default=False)
     parser.add_argument('--max_ep_len', type=int, default=18000)#default of the diamond env
     parser.add_argument('--max_ep_len_dataset', type=int, default=65536)#nice round number thats almost
     parser.add_argument('--mode', type=str, default='normal')  # normal for standard setting, delayed for sparse
     parser.add_argument('--K', type=int, default=20)#TODO maybe rename or change how it works to have diferent sizes of embedings for rewards
     parser.add_argument('--pct_traj', type=float, default=1.)
     parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--buffer_target_size', type=int, default=2000)
+    parser.add_argument('--buffer_target_size_validation', type=int, default=2000)
+    parser.add_argument('--store_rewards2go', type=bool, default=False)
     parser.add_argument('--model_type', type=str, default='dt')  # dt for decision transformer, bc for behavior cloning
     parser.add_argument('--embed_dim', type=int, default=256)#TODO fix this so it doest crash whenever its not 128
     parser.add_argument('--n_layer', type=int, default=3)
@@ -387,24 +351,28 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-4)
     parser.add_argument('--weight_decay', '-wd', type=float, default=1e-4)
-    parser.add_argument('--warmup_steps', type=int, default=10000)
+    parser.add_argument('--warmup_steps', type=int, default=100)
     parser.add_argument('--num_eval_episodes', type=int, default=1)
-    parser.add_argument('--max_iters', type=int, default=10)
-    parser.add_argument('--num_steps_per_iter', type=int, default=10000)
+    parser.add_argument('--max_iters', type=int, default=100)
+    parser.add_argument('--num_steps_per_iter', type=int, default=100)
+    parser.add_argument('--num_validation_iters', type=int, default=10)#num of validation iterations before running the minerl env.
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--log_to_wandb', '-w', type=bool, default=True)
-    parser.add_argument('--checkpoint', type=bool, default=False)#TODO add warning if checkpoint is false and there is a non default checkpoint name(maybe theres some way to make conditional parsing
-    parser.add_argument('--checkpoint_name', type=str, default="decisiontransformers_8x8x1vaeq_256_noKmeans")#TODO change
+    parser.add_argument('--log_to_wandb', '-w', type=bool, default=False)
+    parser.add_argument('--group_name','-g' , type=str, default="vqvae_diamond_fixed_embed_dim_debugged_vq_vae")
+    parser.add_argument('--use_checkpoint', type=bool, default=False)#TODO add warning if checkpoint is false and there is a non default checkpoint name(maybe theres some way to make conditional parsing
+    parser.add_argument('--checkpoint_name', type=str, default="decisiontransformers_convolution")#TODO change
     parser.add_argument('--convolution_head', type=bool, default=False)
-    parser.add_argument('--minerl_samples', type=int, default=5)
+    #VQ_VAE configurations
+    parser.add_argument('--discrete_pov', type=bool, default=False)
     parser.add_argument('--vae_model', type=str, default="embedingdim_1")
     parser.add_argument('--vae_embedings', type=int, default=65536)
     parser.add_argument('--vae_embedding_dim', type=int, default=1)
-    parser.add_argument('--kmeans_actions', type=bool, default=False)#TODO make this actually work , currently causes strange errors.
+    #Dicretize actions configurations
+    parser.add_argument('--kmeans_actions', type=bool, default=False)#TODO????? make this actually work , currently causes strange errors.
     parser.add_argument('--kmeans_action_centroids', type=int, default=128)#TODO make this actually work , currently causes strange errors.
     parser.add_argument('--discrete_rewards', type=bool, default=False)#TODO make this actually work, needs some way of mapping actions to specific indices
     
-        #TODO make it so save fines are generated depending on parameters
+    #TODO make it so save fines are generated depending on parameters
     args = parser.parse_args()
 
     main(parameters=vars(args))

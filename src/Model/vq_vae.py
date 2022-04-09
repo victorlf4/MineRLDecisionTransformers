@@ -263,7 +263,8 @@ class VectorQuantizerVAE:
         ,embedding_dim = 64
         ,num_embeddings = 512
      ,commitment_cost = 0.25,
-        decay = 0.99):
+        decay = 0.99,
+        device_name ="cuda"):
         self.train_res_recon_error = []
         self.train_res_perplexity = []
         self.model_name=model_name
@@ -282,8 +283,11 @@ class VectorQuantizerVAE:
         self.commitment_cost = commitment_cost
         self.decay = decay
         #create model and optimizer
-        self._checkpoint_file ="./models/"+self.model_name                          
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._checkpoint_file ="./models/"+self.model_name       
+        if device_name=="cuda":                   
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device_name)
         self.model = Model(self.num_hiddens, self.num_residual_layers, self.num_residual_hiddens,
                 self.num_embeddings, self.embedding_dim, 
                 self.commitment_cost, self.decay).to(self.device)
@@ -345,9 +349,9 @@ class VectorQuantizerVAE:
         
         self.model.eval()
         valid_originals = next(iter(validation_iterator))
-        if len(valid_originals) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+        '''if len(valid_originals) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
             valid_originals=valid_originals[0]
-    
+        '''#TODO fix this
         valid_originals = valid_originals.to(self.device)
         vq_output_eval = self.model._pre_vq_conv(self.model._encoder(valid_originals))
         _, valid_quantize, _, _ = self.model._vq_vae(vq_output_eval)
@@ -366,8 +370,9 @@ class VectorQuantizerVAE:
         vq_output_eval = self.model._pre_vq_conv(self.model._encoder(valid_original))
         _, valid_quantize, _, _ = self.model._vq_vae(vq_output_eval)
         valid_reconstructions = self.model._decoder(valid_quantize)
-        plt.imshow(valid_reconstructions.cpu().data)
-        plt.show()
+        valid_reconstructions=torch.squeeze(valid_reconstructions)
+        valid_original=torch.squeeze(valid_original)
+        show(valid_reconstructions.cpu().data)
         show(valid_original.cpu())
 
     def showEmbedding(self):
@@ -384,6 +389,15 @@ class VectorQuantizerVAE:
             vq_output = self.model._pre_vq_conv(self.model._encoder(image))
             _, quantized, _, encodings = self.model._vq_vae(vq_output)
         return encodings
+    def quantize(self,image):
+        #if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+            #image=image[0]
+        #TODO reimplement skipping labels so I can run tests whith cifar, maybe as an option
+        image= image.to(self.device)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        return quantized
     def encodeSingle(self,image):
         if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
             image=image[0]
