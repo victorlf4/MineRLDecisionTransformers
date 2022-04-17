@@ -17,8 +17,6 @@ def evaluate_validation_rtg(
         action_centroids=None,#if we are using kmeans
         validation_batches=10,
         scale=1000.,
-        state_mean=np.zeros(1),#TODO send the actual mean here when not using vq_vae
-        state_std=np.zeros(1),#TODO send the actual std here when not using vq_vae
         device='cuda',
         mode='normal',
         

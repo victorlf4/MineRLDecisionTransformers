@@ -29,7 +29,7 @@ validation_dataset= MinerlImageIterator(dataValidation,transform=transforms.ToTe
 
 env = gym.make('MineRLObtainDiamondVectorObf-v0')
 
-vae_model=vaeq("embedingdim_1_numembedings_131072",embedding_dim = 1,num_embeddings =131072,batch_size=32)
+vae_model=vaeq("default_vqvae",batch_size=32)
 
 observations=[]
 for image in variace_estimation_dataset:

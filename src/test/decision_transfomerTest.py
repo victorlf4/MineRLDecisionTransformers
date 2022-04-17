@@ -378,7 +378,7 @@ model = decision_transformer.DecisionTransformer(
             max_length=max_length,
             max_ep_len=max_ep_len,
             discrete_rewards=None,#1095,#1095 is the number of posible reward combinations in the minerl enviroment, though most are very unlikel
-            discrete_actions=num_action_centroids,
+            kmeans_centroids=num_action_centroids,
             discrete_states=65536,
             hidden_size=256,
             n_layer=3,
@@ -503,7 +503,7 @@ scheduler = th.optim.lr_scheduler.LambdaLR(
 
 
 
-from Model.evaluate_episodes import evaluate_episode_rtg
+from evaluation.evaluate_episodes import evaluate_episode_rtg
 mode="delayed"#?? says normal for standard setting, delayed for sparse sso i guess delayed cause diamond is sparse kind of
 def eval_episodes(target_rew):
         def fn(model):

@@ -79,7 +79,7 @@ class BufferedTrajectoryIter:#TODO, add another version that samples whithout re
                         trajectory=trajectory_rtg
 
                     trajectory =list(divide_sequences(trajectory,self.sequence_size))#we divide the trajectory in chunks of sequentially ordered tuples#TODO maybe use multimap to make dictionaries instead or in adition to
-                    self.traj_sizes.append(traj_len/self.sequence_size)
+                    self.traj_sizes.append(traj_len)
                     self.avg_traj_size = np.mean(self.traj_sizes)
                     self.data_buffer=self.data_buffer+ trajectory
                     buffer_updated = True
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     bbi = BufferedTrajectoryIter(data_pipeline, buffer_target_size=10000)
     num_timesteps = 0
     for data_dict in bbi.buffered_batch_iter(batch_size=test_batch_size, num_epochs=1):
-        num_timesteps += len(data_dict['obs']['pov'])
+        num_timesteps += 1
 
     print(f"{num_timesteps} found for env {env} using batch_iter")
     end_time = time.time()
