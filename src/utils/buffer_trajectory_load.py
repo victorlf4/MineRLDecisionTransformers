@@ -24,7 +24,7 @@ def calculateReward2go(trajectory):
                     for dataset_observation, dataset_action, dataset_reward, _, done,timesteps in trajectory:
                                 rewards.append(dataset_reward)
                     return reward2go(rewards)
-
+#TODO add an option to separate n trajectories as validation
 class BufferedTrajectoryIter:#TODO, add another version that samples whithout repetition
         def __init__(self,
                  data_pipeline,

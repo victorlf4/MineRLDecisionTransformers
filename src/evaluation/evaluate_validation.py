@@ -37,6 +37,6 @@ def evaluate_validation_rtg(
         loss = loss_fn(
                 None, action_preds, None,
                 None, action_target, None,
-            )#TODO add action loss
+            )#TODO add state loss option
         validation_losses.append(loss.detach().cpu().item()) 
     return validation_losses

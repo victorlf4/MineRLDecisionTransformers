@@ -30,7 +30,7 @@ def evaluate_episode_rtg(
     state_std = torch.from_numpy(state_std).to(device=device)
 
     state = env.reset()
-    if vq_vae:
+    if vq_vae:#TODO Check if this is working properly
         state=tokenize_image(vq_vae,state["pov"],device)
     else:
         state=torch.tensor(state["pov"]).to(device).div(256)
@@ -55,7 +55,7 @@ def evaluate_episode_rtg(
         # add padding
         actions = torch.cat([actions, torch.zeros((1, act_dim), device=device)], dim=0)
         rewards = torch.cat([rewards, torch.zeros(1, device=device)])
-
+        
         '''action = model.get_action(
             (states.to(dtype=torch.float32) - state_mean) / state_std,#TODO make this only happen when not using vq:vae
             actions.to(dtype=torch.float32),

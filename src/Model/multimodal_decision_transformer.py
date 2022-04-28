@@ -54,9 +54,15 @@ class DecisionTransformer(nn.Module):
 
     def __init__(
             self,
-            state_dim,
+            pov_dim,
             act_dim,
             hidden_size,
+            hidden_size_reward=None,
+            hidden_size_action=None,
+            hidden_size_pov=None,
+            hidden_size_state=None,
+            state_dim=None,
+            vector_state=False,#TODO change to state size
             max_length=None,
             max_ep_len=18000,
             action_tanh=True,
@@ -67,10 +73,14 @@ class DecisionTransformer(nn.Module):
             **kwargs
     ):
         super().__init__()
-
-        self.hidden_size = hidden_size#reemplazando a Trajectory model , posibles bugs causados por eso
-        self.state_dim = state_dim
+        self.vector_state=vector_state
+        self.hidden_size_reward=hidden_size_reward
+        self.hidden_size_action=hidden_size_action
+        self.hidden_size_pov=hidden_size_pov
+        self.hidden_size_state=hidden_size_state 
+        self.pov_dim = pov_dim
         self.act_dim = act_dim
+        self.state_dim=state_dim
         self.max_length = max_length
         self.discrete_rewards=discrete_rewards
         self.kmeans_centroids=kmeans_centroids
@@ -102,18 +112,22 @@ class DecisionTransformer(nn.Module):
             self.embed_action = torch.nn.Linear(self.act_dim, hidden_size)
 
         if discrete_states is not None:
-            self.embed_state = lambda x: x #just returns the state unchanged
+            self.embed_pov = lambda x: x #just returns the state unchanged
 
         elif natureCNN:
-            self.embed_state  = NatureCNN((3, 64, 64), hidden_size)
+            self.embed_pov  = NatureCNN((3, 64, 64), hidden_size)
             '''
-            self.embed_state = nn.Sequential(nn.Conv2d(state_dim[0], 32, 8, stride=4, padding=0), nn.ReLU(),
+            self.embed_pov = nn.Sequential(nn.Conv2d(pov_dim[0], 32, 8, stride=4, padding=0), nn.ReLU(),
                                  nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
                                  nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU(),
                                  nn.Flatten(), nn.Linear(3136, hidden_size), nn.Tanh())
             '''
         else:
-            self.embed_state = torch.nn.Linear(self.state_dim[0], hidden_size)
+            self.embed_pov = torch.nn.Linear(self.pov_dim[0], hidden_size)
+
+        if self.vector_state:
+            self.embed_state = torch.nn.Linear(self.state_dim, hidden_size)
+
     
         
         self.embed_ln = nn.LayerNorm(hidden_size)
@@ -121,11 +135,14 @@ class DecisionTransformer(nn.Module):
         # note: we don't predict states or returns for the paper
         
         if discrete_states is not None:
-            self.predict_state = torch.nn.Linear(hidden_size,self.state_dim[0])#todo maybe change to the vq_vae embedding
+            self.predict_pov = torch.nn.Linear(hidden_size,self.pov_dim[0])#todo maybe change to the vq_vae embedding
         elif natureCNN:#TODO make this work probably doest make sense currently
-            self.predict_state = torch.nn.Linear(hidden_size, self.state_dim[0])
+            self.predict_pov = torch.nn.Linear(hidden_size, self.pov_dim[0])
         else:
-            self.predict_state = torch.nn.Linear(hidden_size, self.state_dim[0])
+            self.predict_pov = torch.nn.Linear(hidden_size, self.pov_dim[0])
+        
+        if self.vector_state:
+            self.predict_state = torch.nn.Linear(hidden_size, self.state_dim)
             
         
         self.predict_action = nn.Sequential(#TODO try generating centroid directly
@@ -136,9 +153,9 @@ class DecisionTransformer(nn.Module):
         
         self.predict_return = torch.nn.Linear(hidden_size, 1)
 
-    def forward(self, states, actions, rewards, returns_to_go, timesteps, attention_mask=None):#TODO maybe call diferent methods for the diferetn options from this forward for redability
+    def forward(self,state, pov, actions, rewards, returns_to_go, timesteps, attention_mask=None):#TODO maybe call diferent methods for the diferetn options from this forward for redability
 
-        batch_size, seq_length = states.shape[0], states.shape[1]
+        batch_size, seq_length = pov.shape[0], pov.shape[1]
 
         if attention_mask is None:
             # attention mask for GPT: 1 if can be attended to, 0 if not
@@ -146,39 +163,51 @@ class DecisionTransformer(nn.Module):
         if self.discrete_rewards is not None:    
             returns_to_go=returns_to_go.to(dtype=torch.float32)
         if self.kmeans_centroids is not None:
-            actions = torch.argmin(torch.cdist(actions,self.kmeans_centroids))#maybe add detatch cause otherwise gradient doest flow though   
-            
-
-            #actions=actions.to(dtype=torch.in)
+            print(actions)
+            print(self.kmeans_centroids)
+            actions = torch.argmin(torch.cdist(actions,self.kmeans_centroids))#maybe add detatch cause otherwise gradient does't flow though   
+            actions=actions.to(dtype=torch.float32)
         if self.natureCNN:
-            states = states.reshape(-1, 3, states.shape[2], states.shape[3]).type(torch.float32).contiguous() #reshapes the steps as batches (batch * block_size, n_embd)
+            pov = pov.reshape(-1, 3, pov.shape[3], pov.shape[4]).type(torch.float32).contiguous() #reshapes the steps as batches (batch * block_size, n_embd)
           
         # embed each modality with a different head
-        state_embeddings = self.embed_state(states)
+        pov_embeddings = self.embed_pov(pov)
         action_embeddings = self.embed_action(actions)
         returns_embeddings = self.embed_return(returns_to_go)
         time_embeddings = self.embed_timestep(timesteps)
-
+        if self.vector_state:   
+            state_embeddings  = self.embed_state(state)
         if self.natureCNN:
-                state_embeddings = state_embeddings.reshape(batch_size, seq_length, self.hidden_size) 
+                pov_embeddings = pov_embeddings.reshape(batch_size, seq_length, self.hidden_size) 
         # time embeddings are treated similar to positional embeddings
-        state_embeddings = state_embeddings + time_embeddings
+        pov_embeddings = pov_embeddings + time_embeddings
         action_embeddings = action_embeddings + time_embeddings
         returns_embeddings = returns_embeddings + time_embeddings
         
-
-        
-        # this makes the sequence look like (R_1, s_1, a_1, R_2, s_2, a_2, ...)
-        # which works nice in an autoregressive sense since states predict actions
-        stacked_inputs = torch.stack(
-            (returns_embeddings, state_embeddings, action_embeddings), dim=1
-        ).permute(0, 2, 1, 3).reshape(batch_size, 3*seq_length, self.hidden_size)
-        stacked_inputs = self.embed_ln(stacked_inputs)
-
-        # to make the attention mask fit the stacked inputs, have to stack it as well
-        stacked_attention_mask = torch.stack(
+        if self.vector_state:
+            state_embeddings = state_embeddings + time_embeddings
+            # this makes the sequence look like (R_1,s_1,p_1, a_1, R_2, s_2,p_2, a_2, ...)
+            # which works nice in an autoregressive sense since states predict actions
+            stacked_inputs = torch.stack(
+                (returns_embeddings, state_embeddings,pov_embeddings, action_embeddings), dim=1
+            ).permute(0, 2, 1, 3).reshape(batch_size, 4*seq_length, self.hidden_size)
+            stacked_inputs = self.embed_ln(stacked_inputs)
+            # to make the attention mask fit the stacked inputs, have to stack it as well
+            stacked_attention_mask = torch.stack(
+            (attention_mask, attention_mask, attention_mask,attention_mask), dim=1
+            ).permute(0, 2, 1).reshape(batch_size, 4*seq_length)
+            
+        else:
+            # this makes the sequence look like (R_1, s_1, a_1, R_2, s_2, a_2, ...)
+            # which works nice in an autoregressive sense since states predict actions
+            stacked_inputs = torch.stack(
+                (returns_embeddings, pov_embeddings, action_embeddings), dim=1
+            ).permute(0, 2, 1, 3).reshape(batch_size, 3*seq_length, self.hidden_size)
+            stacked_inputs = self.embed_ln(stacked_inputs)
+            stacked_attention_mask = torch.stack(
             (attention_mask, attention_mask, attention_mask), dim=1
-        ).permute(0, 2, 1).reshape(batch_size, 3*seq_length)
+            ).permute(0, 2, 1).reshape(batch_size, 3*seq_length)#TODO do this in a more extensible and elegant way
+
 
         # we feed in the input embeddings (not word indices as in NLP) to the model
         transformer_outputs = self.transformer(
@@ -188,28 +217,41 @@ class DecisionTransformer(nn.Module):
         x = transformer_outputs['last_hidden_state']
 
         # reshape x so that the second dimension corresponds to the original
-        # returns (0), states (1), or actions (2); i.e. x[:,1,t] is the token for s_t
-        x = x.reshape(batch_size, seq_length, 3, self.hidden_size).permute(0, 2, 1, 3)
+        if self.vector_state:
+            # returns (0), states (1),pov (2), or actions (3) i.e. x[:,1,t] is the token for s_t
+            x = x.reshape(batch_size, seq_length, 4, self.hidden_size).permute(0, 2, 1, 3)#TODO fix permute
+        else:
+            # returns (0), states (1), or actions (2); i.e. x[:,1,t] is the token for s_t
+            x = x.reshape(batch_size, seq_length, 3, self.hidden_size).permute(0, 2, 1, 3)#TODO fix permute
 
         # get predictions
-        return_preds = self.predict_return(x[:,2])  # predict next return given state and action
-        state_preds = self.predict_state(x[:,2])    # predict next state given state and action
-        action_preds = self.predict_action(x[:,1])  # predict next action given state
+        if self.vector_state:
+            return_preds = self.predict_return(x[:,3])  # predict next return given state, pov and action
+            state_preds = self.predict_state(x[:,3])   # predict next state given state, pov and action
+            pov_preds = self.predict_pov(x[:,3])    # predict next state given state, pov and action
+            action_preds = self.predict_action(x[:,2])  # predict next action given state
+        else:
+            return_preds = self.predict_return(x[:,2])# predict next return given state and action
+            state_preds= None
+            pov_preds = self.predict_pov(x[:,2])    # predict next state given state and action
+            action_preds = self.predict_action(x[:,1])  # predict next action given state
+      
+        
         if self.kmeans_centroids is not None:
             action_index = torch.argmin(torch.cdist(action_preds,self.kmeans_centroids))#maybe add detatch cause otherwise gradient doest flow though   
             action_preds=self.kmeans_centroids[action_index]
 
-        return state_preds, action_preds, return_preds
+        return state_preds,pov_preds, action_preds, return_preds
 
     def get_action(self, states, actions, rewards, returns_to_go, timesteps, **kwargs):
         # we don't care about the past rewards in this model
         
 
 
-        #states = states.reshape(1, -1, self.state_dim) TODO make it work when no vq_vqvae
+        #states = states.reshape(1, -1, self.pov_dim) TODO make it work when no vq_vqvae
         #states = states.reshape(1, -1)
 
-        states = states.reshape((1, -1,)+self.state_dim)
+        states = states.reshape((1, -1,)+self.pov_dim)
         '''
         if self.kmeans_centroids is not None:
             actions = actions.reshape(1, -1)
@@ -231,7 +273,7 @@ class DecisionTransformer(nn.Module):
             attention_mask = torch.cat([torch.zeros(self.max_length-states.shape[1]), torch.ones(states.shape[1])])
             attention_mask = attention_mask.to(dtype=torch.long, device=states.device).reshape(1, -1)
             states = torch.cat(
-                    [torch.zeros((states.shape[0], self.max_length-states.shape[1], )+self.state_dim, device=states.device), states],
+                    [torch.zeros((states.shape[0], self.max_length-states.shape[1], )+self.pov_dim, device=states.device), states],
                     dim=1).to(dtype=torch.float32)
             '''
             if self.kmeans_centroids is not None:
@@ -258,7 +300,7 @@ class DecisionTransformer(nn.Module):
             ).to(dtype=torch.long)
         else:
             attention_mask = None
-        _, action_preds, return_preds = self.forward(
+        _,_, action_preds, return_preds = self.forward(
             states, actions, None, returns_to_go, timesteps, attention_mask=attention_mask, **kwargs)
 
         return action_preds[0,-1]
