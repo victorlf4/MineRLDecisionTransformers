@@ -6,8 +6,7 @@ from torch import nn
 import gym
 import minerl
 from sklearn.cluster import KMeans
-from torch.utils.data.dataset import IterableDataset
-from  Model.vq_vae import VectorQuantizerVAE as vaeq
+from  Model.vq_vae import VectorQuantizerVAE as vq_vae
 import os
 import wandb
 import argparse
@@ -24,36 +23,11 @@ from utils.minerl_iterators import MinerlActionIterator
 from utils.buffer_trajectory_load import BufferedTrajectoryIter
 
 #TODO try scaling transformer for vq_vae
-#TODO maybe try things like t-SNE and UMAP or other way of reemplacing vae?
-#TODO add some way to run an unmodified dt for baseline
-#TODO add optional convnet when not quantized, + maybe vq_vae convnet option although that makes less sense)
-#TODO change action dictionary to a vector in basalt envs
 #TODO propagate gradients througth frozen vq_vae
-#TODO remake batch norm scaling !!!!!!
+#TODO remake batch norm scaling
 #TODO maybe try dropout in encoder?
-def reward2go(rewards):
-                rewards2go=[]
-                remainingR=sum(rewards)
-
-                for r in rewards:
-                        reward2go=remainingR-r
-                        rewards2go.append(reward2go)
-                        remainingR=reward2go
-                return rewards2go
-
-#we precalculate the rewards to go to avoid loading the entire dataset every time we train
-#TODO add storing in a file
-def calculate_rewards2go(trajectories):
-        dataset_rewards2go=[]
-        for trajectory in trajectories:
-                rewards=[]
-                for dataset_observation, dataset_action, dataset_reward, _, done in trajectory:
-                        rewards.append(dataset_reward)
-                dataset_rewards2go.append(reward2go(rewards))
-        return dataset_rewards2go
-
-def main(parameters
-):              
+#TODO test if number of validation steps affects training.
+def main(parameters):              
         #loading parameters
         use_checkpoint=parameters['use_checkpoint']
         batch_size = parameters['batch_size']
@@ -64,31 +38,36 @@ def main(parameters
         pov_encoder=parameters['pov_encoder']
         vectorize_actions=parameters['vectorize_actions']
         state_vector=parameters['state_vector']
+        validation_steps=parameters['validation_steps']
         if pov_encoder == "vq_vae":
                 discrete_states=parameters["vae_embedings"]
         else:
                 discrete_states=None
-
+        
         log_to_wandb=parameters['log_to_wandb']
         max_length=parameters['K']
         max_ep_len=parameters['max_ep_len']
         max_ep_len_dataset=parameters['max_ep_len_dataset']
         buffer_target_size=parameters['buffer_target_size']
         buffer_target_size_validation=parameters['buffer_target_size_validation']
+        #validation_trajectories=parameters['validation_trajectories']
         warmup_steps = parameters['warmup_steps']
         visualize=parameters['visualize']
         
         num_steps_per_iter=parameters['num_steps_per_iter']
         max_iters=parameters['max_iters']
-        checkpoint_file ="./models/"+parameters['checkpoint_name']
-        mode = parameters['checkpoint_name']
+        checkpoint_file ="./models/"+parameters['model_name']
+        mode = parameters['mode']
         env_targets = parameters["target_rewards"]
         if pov_encoder == "vq_vae":
-                state_dim=256*parameters["vae_embedding_dim"] #TODO actually figure out why its 256 
-        elif convolution_head:
-                state_dim=(3,64,64) 
+                state_dim=(256*parameters["vae_embedding_dim"],) #TODO actually figure out why its 256 
+                convolution_head= False
+        elif pov_encoder == "cnn":
+                state_dim=(64,64,3)
+                convolution_head= True 
         else:
                 state_dim=(3*64*64,)
+                convolution_head= False
                 
         if parameters['device']=="cuda":
                 device = th.device("cuda" if th.cuda.is_available() else "cpu")
@@ -97,12 +76,12 @@ def main(parameters
         else:
                 device = th.device(parameters['device'])
         if pov_encoder == "vq_vae":
-                vae_model=vaeq(parameters["vae_model"],embedding_dim = parameters["vae_embedding_dim"],num_embeddings =parameters["vae_embedings"],device_name=parameters["device"],batch_size=16)
+                vae_model=vq_vae(parameters["vae_model"],embedding_dim = parameters["vae_embedding_dim"],num_embeddings =parameters["vae_embedings"],device_name=parameters["device"],batch_size=32)
                 vae_model.load()
         else:
                 vae_model=None
         #Load minecraft env and dataset
-        verify_or_download_dataset(directory='data', environment=parameters["dataset"])#TODO codigo de baselines competition para solo intentar descarbgar si no existe
+        verify_or_download_dataset(directory='data', environment=parameters["dataset"])
         data = minerl.data.make(parameters["dataset"],  data_dir='data', num_workers=4)
         
         def load_env(env_name):
@@ -137,6 +116,7 @@ def main(parameters
                 action_centroids=checkpoint_kmeans['action_centroids']
                 return action_centroids.to(device)
         act_dim = env.action_space["vector"].shape[0]#TODO handle problems whith envoroments and datasets having diferent action spaces
+        
 
         if discrete_actions:
                 if os.path.exists(checkpoint_file+"_kmeans"):
@@ -154,12 +134,13 @@ def main(parameters
                         save_kmeans()
         else:
                 action_centroids=None
-
+        #TODO! quick test loading 4 trajectories and overfitting heavily on them or alternatively self validate
         trajectory_buffer=BufferedTrajectoryIter(data,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
         trajectory_buffer_iter=trajectory_buffer.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters)+warmup_steps)
         
         trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
-        trajectory_buffer_iter_validation=trajectory_buffer_validation.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters))#TODO make this dependent on num of validation iterations
+        trajectory_buffer_iter_validation=trajectory_buffer_validation.buffered_batch_iter(batch_size,num_batches=(validation_steps*max_iters))#TODO make this dependent on num of validation iterations
+
         def get_batch(batch_size=64, max_len=max_length, validation=False):
                 actionBatch=[]
                 obsBatch=[]
@@ -187,13 +168,6 @@ def main(parameters
                                 else:
                                         pov_dim=(obsBatch[-1].shape[1],obsBatch[-1].shape[2],obsBatch[-1].shape[3])#shape of images
                                 obsBatch[-1] = np.concatenate([np.zeros((max_len - sequence_lenght,)+pov_dim), obsBatch[-1]], axis=0)#+concantenates tuples here
-                                
-                                '''
-                                if discrete_actions:#TODO maybe move this diference to a reshape , leave this as the non discrete version and unsqueeze on the other side 
-                                        actionBatch[-1] = np.concatenate([np.zeros(max_len - sequence_lenght), actionBatch[-1]], axis=0)#TODO *-10 mask or =?
-                                else:
-                                        actionBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , actionBatch[-1]], axis=0)
-                                '''
                                 actionBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , actionBatch[-1]], axis=0)
                                 if discrete_rewards:
                                         rewardsBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rewardsBatch[-1]], axis=0)
@@ -208,10 +182,14 @@ def main(parameters
                                 timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
                                 mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
                 #obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)#change to int only if discrete actions
-                if not convolution_head and not pov_encoder == "vq_vae":#TODO make this if otpion lineal
+                
+                if pov_encoder == "linear":
                         obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256).flatten(start_dim=2)#change to int only if discrete actions
-                else:
-                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)#change to int only if discrete actions
+                elif pov_encoder == "cnn":
+                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256)
+                elif pov_encoder == "vq_vae":
+                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)        
+
 
                         
                 actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
@@ -261,7 +239,7 @@ def main(parameters
                                                 vae_model,
                                                 action_centroids=action_centroids,
                                                 max_ep_len=max_ep_len,
-                                                scale=1,#TODO check if scalling would make sense
+                                                scale=1,#TODO check if reward scalling would make sense
                                                 target_return=target_rew/1,
                                                 mode=mode,
                                                 device=device,
@@ -273,8 +251,8 @@ def main(parameters
                                 f'target_{target_rew}_return_mean': np.mean(returns),
                                 f'target_{target_rew}_return_std': np.std(returns),
                                 f'target_{target_rew}_return_max': np.max(returns),
-                                f'target_{target_rew}_length_mean': np.mean(lengths),
-                                f'target_{target_rew}_length_std': np.std(lengths),#TODO maybe erase because they arent really useful for minerl
+                                #f'target_{target_rew}_length_mean': np.mean(lengths),
+                                #f'target_{target_rew}_length_std': np.std(lengths),
                         }
                 return fn
         def validation_fn(model):
@@ -290,7 +268,7 @@ def main(parameters
                                 batch_size,
                                 loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: th.mean((a_hat - a)**2),
                                 action_centroids=None,#if we are using kmeans
-                                validation_batches=10,
+                                validation_batches=validation_steps,
                                 scale=1.,
                                 device='cuda',
                                 mode='normal',
@@ -316,7 +294,7 @@ def main(parameters
         )
         if log_to_wandb:
                 wandb.init(
-                        name=f'{parameters["group_name"]}-{random.randint(int(1e5), int(1e6) - 1)}',
+                        name=f'{parameters["group_name"]}-{parameters["model_name"]}',#TODO test using checkpoint name as name if avaliable
                         group=parameters["group_name"],
                         project='decision-transformer_TFM',
                         config=parameters)
@@ -350,11 +328,13 @@ def main(parameters
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    #TODO add warnings for wrong parameters.check whether it can be done whith argparse
+
     parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0')
     parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')
     parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0')
-    parser.add_argument('--target_rewards', nargs='+', default=[64])#Accepts multiple imputs#TODO fix bug where it interpre
+    parser.add_argument('--validation_steps', type=int, default=10)
+    #parser.add_argument('--validation_trajectories', type=str, default=5)#if the validation dataset is the same as the train dataset separate a fraction of it?TODO(maybe do this at the dataset level instead manually)
+    parser.add_argument('--target_rewards', nargs='+', default=[64])#Accepts multiple imputs#TODO!!! fix bug where it interpres this as an int
     parser.add_argument('--vectorize_actions' , type=bool, default=False)#TODO make this automatic
     parser.add_argument('--visualize' , type=bool, default=False)
     parser.add_argument('--record' , type=bool, default=False)
@@ -383,7 +363,7 @@ if __name__ == '__main__':
     parser.add_argument('--log_to_wandb', '-w', type=bool, default=False)
     parser.add_argument('--group_name','-g' , type=str, default="vqvae_diamond_fixed_embed_dim_debugged_vq_vae")
     parser.add_argument('--use_checkpoint', type=bool, default=False)#TODo eliminate and replace whith just havign a checkpooint name
-    parser.add_argument('--checkpoint_name', type=str, default="decisiontransformers_convolution")#TODO 
+    parser.add_argument('--model_name', type=str, default="decisiontransformers_convolution")
     parser.add_argument('--pov_encoder', type=str, default="linear")
     parser.add_argument('--state_vector', type=bool, default=False)
     #VQ_VAE configurations
@@ -395,7 +375,7 @@ if __name__ == '__main__':
     parser.add_argument('--kmeans_action_centroids', type=int, default=128)#TODO make this actually work , currently causes strange errors.
     parser.add_argument('--discrete_rewards', type=bool, default=False)#TODO make this actually work, needs some way of mapping actions to specific indices
     
-    #TODO make it so save fines are generated depending on parameters
+    #TODO make it so save files are generated depending on parameters
     args = parser.parse_args()
 
     main(parameters=vars(args))

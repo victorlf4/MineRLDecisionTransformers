@@ -13,6 +13,8 @@ bbi = minerl.data.BufferedTrajectoryIter(data_pipeline, buffer_target_size=20000
 num_timesteps = 0
 for data_dict in bbi.buffered_batch_iter(batch_size=1, num_epochs=1):
         num_timesteps += 1
+        print(data_dict)
+
 print(num_timesteps)
 
 

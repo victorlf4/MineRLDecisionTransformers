@@ -1,8 +1,8 @@
 import minerl
-import random
 import torch as th
 import os
-def reward2go(rewards):
+from numpy import save
+def reward2go(rewards): 
                 rewards2go=[]
                 remainingR=sum(rewards)
 
@@ -21,12 +21,18 @@ def calculateReward2go(trajectory):
                                 rewards.append(dataset_reward)
                     return reward2go(rewards)
 
-MINERL_DATA_ROOT = os.getenv('MINERL_DATA_ROOT')
-data_pipeline = minerl.data.make("MineRLObtainDiamondVectorObf-v0",  data_dir='data', num_workers=1)
-#data_pipeline = minerl.data.make(env, MINERL_DATA_ROOT)
-bbi = minerl.data.BufferedBatchIter(data_pipeline, buffer_target_size=20000)
-num_timesteps = 0
-for data_dict in bbi.buffered_batch_iter(batch_size=1,b):
+minerl.data.download(directory='data', environment='MineRLObtainDiamondVectorObf-v0')
+data = minerl.data.make("MineRLObtainDiamondVectorObf-v0",  data_dir='data', num_workers=1)
+trajectory_names = data.get_trajectory_names()
+trajectories= []
+print("num trajectories")
+print(len(trajectory_names))
+for name in trajectory_names:
+    trajectories.append(data.load_data(name, skip_interval=0, include_metadata=False))
+rewards[]
+for data_dict in bbi.buffered_batch_iter(batch_size=1, num_epochs=1):
         num_timesteps += 1
-        data_dict["obs"]
+        rewards
 print(num_timesteps)
+
+#TODO fix this , maybe add a file to the dataset

@@ -25,3 +25,4 @@ def load_env(env_name,vectorize_actions=False,obfuscate_actions=False,record=Fal
 def vectorize_dataset(data):
     data_enviroment=Vectorized(data.spec)
     return data_enviroment
+

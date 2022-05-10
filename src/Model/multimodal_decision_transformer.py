@@ -134,9 +134,9 @@ class DecisionTransformer(nn.Module):
         
         # note: we don't predict states or returns for the paper
         
-        if discrete_states is not None:
+        if discrete_states is not None:#TODO! erase this from tfm version if i dont change it in time
             self.predict_pov = torch.nn.Linear(hidden_size,self.pov_dim[0])#todo maybe change to the vq_vae embedding
-        elif natureCNN:#TODO make this work probably doest make sense currently
+        elif natureCNN:#TODO replace whith deconvolutional net
             self.predict_pov = torch.nn.Linear(hidden_size, self.pov_dim[0])
         else:
             self.predict_pov = torch.nn.Linear(hidden_size, self.pov_dim[0])

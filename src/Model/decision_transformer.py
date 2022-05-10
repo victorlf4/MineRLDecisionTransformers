@@ -89,9 +89,8 @@ class DecisionTransformer(nn.Module):
         
         self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
 
-        #TODO add this as variants estructured like experiments
         if discrete_rewards is not None:#TODO add some form of reward tokenizer for the embedding.
-            self.embed_return = nn.Embedding(discrete_rewards, hidden_size)#TODO check if we can make the reward a single token.
+            self.embed_return = nn.Embedding(discrete_rewards, hidden_size)
         else:
             self.embed_return = torch.nn.Linear(1, hidden_size)
 
@@ -106,12 +105,6 @@ class DecisionTransformer(nn.Module):
 
         elif natureCNN:
             self.embed_state  = NatureCNN((3, 64, 64), hidden_size)
-            '''
-            self.embed_state = nn.Sequential(nn.Conv2d(state_dim[0], 32, 8, stride=4, padding=0), nn.ReLU(),
-                                 nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
-                                 nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU(),
-                                 nn.Flatten(), nn.Linear(3136, hidden_size), nn.Tanh())
-            '''
         else:
             self.embed_state = torch.nn.Linear(self.state_dim[0], hidden_size)
     
@@ -127,7 +120,6 @@ class DecisionTransformer(nn.Module):
         else:
             self.predict_state = torch.nn.Linear(hidden_size, self.state_dim[0])
             
-        
         self.predict_action = nn.Sequential(#TODO try generating centroid directly
             *([nn.Linear(hidden_size, self.act_dim)] + ([nn.Tanh()] if action_tanh else []))
         )
@@ -146,13 +138,13 @@ class DecisionTransformer(nn.Module):
         if self.discrete_rewards is not None:    
             returns_to_go=returns_to_go.to(dtype=torch.float32)
         if self.kmeans_centroids is not None:
-            actions = torch.argmin(torch.cdist(actions,self.kmeans_centroids))#maybe add detatch cause otherwise gradient doest flow though   
-            
+            actions = torch.argmin(torch.cdist(actions,self.kmeans_centroids),2)#maybe add detatch cause otherwise gradient doest flow though   
+            #actions = actions + (actions_kmeans - actions).detach()
 
             #actions=actions.to(dtype=torch.in)
         if self.natureCNN:
             states = states.reshape(-1, 3, states.shape[2], states.shape[3]).type(torch.float32).contiguous() #reshapes the steps as batches (batch * block_size, n_embd)
-          
+        #print(states.shape)  
         # embed each modality with a different head
         state_embeddings = self.embed_state(states)
         action_embeddings = self.embed_action(actions)
@@ -196,8 +188,9 @@ class DecisionTransformer(nn.Module):
         state_preds = self.predict_state(x[:,2])    # predict next state given state and action
         action_preds = self.predict_action(x[:,1])  # predict next action given state
         if self.kmeans_centroids is not None:
-            action_index = torch.argmin(torch.cdist(action_preds,self.kmeans_centroids))#maybe add detatch cause otherwise gradient doest flow though   
-            action_preds=self.kmeans_centroids[action_index]
+            action_index = torch.argmin(torch.cdist(action_preds,self.kmeans_centroids),2)#maybe add detatch cause otherwise gradient doest flow though   
+            action_preds_kmeans=self.kmeans_centroids[action_index]
+            action_preds = action_preds + (action_preds_kmeans - action_preds).detach()
 
         return state_preds, action_preds, return_preds
 
@@ -210,12 +203,6 @@ class DecisionTransformer(nn.Module):
         #states = states.reshape(1, -1)
 
         states = states.reshape((1, -1,)+self.state_dim)
-        '''
-        if self.kmeans_centroids is not None:
-            actions = actions.reshape(1, -1)
-        else:   
-            actions = actions.reshape(1, -1, self.act_dim)
-        '''
         actions = actions.reshape(1, -1, self.act_dim)
         returns_to_go = returns_to_go.reshape(1, -1, 1)
         timesteps = timesteps.reshape(1, -1)
@@ -233,18 +220,6 @@ class DecisionTransformer(nn.Module):
             states = torch.cat(
                     [torch.zeros((states.shape[0], self.max_length-states.shape[1], )+self.state_dim, device=states.device), states],
                     dim=1).to(dtype=torch.float32)
-            '''
-            if self.kmeans_centroids is not None:
-                actions = torch.cat(
-                    [torch.zeros((actions.shape[0], self.max_length - actions.shape[1]),
-                                device=actions.device), actions],
-                    dim=1).to(dtype=torch.float32)
-            else:
-                actions = torch.cat(
-                    [torch.zeros((actions.shape[0], self.max_length - actions.shape[1], self.act_dim),
-                                device=actions.device), actions],
-                    dim=1).to(dtype=torch.float32)
-            '''
             actions = torch.cat(
                     [torch.zeros((actions.shape[0], self.max_length - actions.shape[1], self.act_dim),
                                 device=actions.device), actions],

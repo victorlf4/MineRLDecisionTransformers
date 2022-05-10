@@ -73,8 +73,6 @@ def evaluate_episode_rtg(
         #vae_model.eval(iter((th.tensor(states,dtype=th.float32).div(256),)))#TODO erase test
         actions[-1] = action
         action = action.detach().cpu().numpy()
-        if action_centroids is not None:#if we are using kmeans
-            action = action_centroids[np.around(action).astype(np.uint64)][0]#[0] because otherwise its a 2d array for some reason
         action = {"vector": action}
         state, reward, done, _ = env.step(action)
         if visualize:
