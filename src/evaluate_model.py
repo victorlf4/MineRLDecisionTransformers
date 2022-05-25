@@ -16,7 +16,7 @@ def main(parameters):
         act_dim=env.action_space["vector"].shape[0]
         vae_model=None
         action_centroids=None
-        max_ep_len=4500
+        max_ep_len=parameters["max_ep_len"]
         mode="normal"
         env_targets=parameters["target_rewards"]
         visualize=True

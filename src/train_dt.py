@@ -357,7 +357,7 @@ if __name__ == '__main__':
     parser.add_argument('--visualize' , type=bool, default=False)
     parser.add_argument('--record' , type=bool, default=False)
     parser.add_argument('--max_ep_len', type=int, default=18000)#default of the diamond env
-    parser.add_argument('--max_ep_len_dataset', type=int, default=65536)#nice round number thats almost
+    parser.add_argument('--max_ep_len_dataset', type=int, default=65536)
     parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')
     parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0')
     parser.add_argument('--buffer_target_size', type=int, default=18000)
@@ -373,7 +373,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_eval_episodes', type=int, default=1)
     parser.add_argument('--validation_steps', type=int, default=10)
     parser.add_argument('--validation_trajectories', type=int, default=5)
-    parser.add_argument('--target_rewards', nargs='+', default=[1571])#Accepts multiple imputs#TODO!!! fix bug where it interprets this as an int       
+    parser.add_argument('--target_rewards',type=int, nargs='+', default=[1571])#Accepts multiple imputs#TODO!!! fix bug where it interprets this as an int       
     #Model parameters
     parser.add_argument('--embed_dim', type=int, default=256)
     parser.add_argument('--n_layer', type=int, default=3)
