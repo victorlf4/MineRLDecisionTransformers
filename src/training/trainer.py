@@ -73,17 +73,17 @@ class Trainer:
         return logs
 
     def train_step(self):
-        states, actions, rewards, dones, attention_mask, returns = self.get_batch(self.batch_size,validation=False)
-        state_target, action_target, reward_target = torch.clone(states), torch.clone(actions), torch.clone(rewards)
+        povs,states, actions, rewards, dones, attention_mask, returns = self.get_batch(self.batch_size,validation=False)
+        pov_target, action_target, reward_target = torch.clone(povs), torch.clone(actions), torch.clone(rewards)
 
-        state_preds, action_preds, reward_preds = self.model.forward(
-            states, actions, rewards, masks=None, attention_mask=attention_mask, target_return=returns,
+        pov_preds, action_preds, reward_preds = self.model.forward(#TODO! add condifitonal state
+            povs, actions, rewards,states=states, masks=None, attention_mask=attention_mask, target_return=returns,
         )
 
         # note: currently indexing & masking is not fully correct
         loss = self.loss_fn(
-            state_preds, action_preds, reward_preds,
-            state_target[:,1:], action_target, reward_target[:,1:],
+            pov_preds, action_preds, reward_preds,
+            pov_target[:,1:], action_target, reward_target[:,1:],
         )
         self.optimizer.zero_grad()
         loss.backward()

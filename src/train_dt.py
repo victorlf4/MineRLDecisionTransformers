@@ -10,7 +10,7 @@ from  Model.vq_vae import VectorQuantizerVAE as vq_vae
 import os
 import wandb
 import argparse
-from Model.decision_transformer import DecisionTransformer
+from Model.multimodal_decision_transformer import DecisionTransformer
 from training.seq_trainer import SequenceTrainer
 from evaluation.evaluate_episodes import evaluate_episode_rtg
 from evaluation.evaluate_validation import evaluate_validation_rtg
@@ -22,11 +22,7 @@ from utils.minerl_encode_sequence import minerlEncodeSequence
 from utils.minerl_iterators import MinerlActionIterator
 from utils.buffer_trajectory_load import BufferedTrajectoryIter
 
-#TODO try scaling transformer for vq_vae
-#TODO propagate gradients througth frozen vq_vae
 #TODO remake batch norm scaling
-#TODO maybe try dropout in encoder?
-#TODO test if number of validation steps affects training.
 def main(parameters):              
         #loading parameters
         use_checkpoint=parameters['use_checkpoint']
@@ -34,7 +30,7 @@ def main(parameters):
         num_eval_episodes = parameters['num_eval_episodes']
         discrete_actions = parameters['kmeans_actions']
         kmeans_action_centroids=parameters['kmeans_action_centroids']
-        discrete_rewards =parameters['discrete_rewards']
+        discrete_rewards =False#parameters['discrete_rewards']TODO not implemented
         pov_encoder=parameters['pov_encoder']
         vectorize_actions=parameters['vectorize_actions']
         state_vector=parameters['state_vector']
@@ -50,7 +46,7 @@ def main(parameters):
         max_ep_len_dataset=parameters['max_ep_len_dataset']
         buffer_target_size=parameters['buffer_target_size']
         buffer_target_size_validation=parameters['buffer_target_size_validation']
-        #validation_trajectories=parameters['validation_trajectories']
+        validation_trajectories=parameters['validation_trajectories']
         warmup_steps = parameters['warmup_steps']
         visualize=parameters['visualize']
         
@@ -60,15 +56,19 @@ def main(parameters):
         mode = parameters['mode']
         env_targets = parameters["target_rewards"]
         if pov_encoder == "vq_vae":
-                state_dim=(256*parameters["vae_embedding_dim"],) #TODO actually figure out why its 256 
+                pov_dim=(256*parameters["vae_embedding_dim"],) 
                 convolution_head= False
         elif pov_encoder == "cnn":
-                state_dim=(64,64,3)
+                pov_dim=(64,64,3)
                 convolution_head= True 
         else:
-                state_dim=(3*64*64,)
+                pov_dim=(3*64*64,)
                 convolution_head= False
-                
+        if state_vector:
+                state_dim= (64,) #TODO calcular correctamente
+        else:
+                state_dim = None
+
         if parameters['device']=="cuda":
                 device = th.device("cuda" if th.cuda.is_available() else "cpu")
                 if device == "cpu":
@@ -122,7 +122,7 @@ def main(parameters):
                 if os.path.exists(checkpoint_file+"_kmeans"):
                         action_centroids=load_kmeans()
                 else:
-                        action_iterator =MinerlActionIterator(data)#TODO sample randomly from any trajectory instead.
+                        action_iterator =MinerlActionIterator(data)
                         action_samples=[]
                         for i in range(100000):
                                 action_samples.append(next(action_iterator))
@@ -134,16 +134,26 @@ def main(parameters):
                         save_kmeans()
         else:
                 action_centroids=None
-        #TODO! quick test loading 4 trajectories and overfitting heavily on them or alternatively self validate
-        trajectory_buffer=BufferedTrajectoryIter(data,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
-        trajectory_buffer_iter=trajectory_buffer.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters)+warmup_steps)
-        
-        trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
+        if parameters["dataset_validation"]==parameters["dataset"]:
+                trajectory_names = data.get_trajectory_names()
+                trajectory_names_train=trajectory_names[validation_trajectories:]
+                trajectory_names_validate=trajectory_names[:validation_trajectories]
+                print("num_training trajectories"+str(len(trajectory_names_train)))
+                trajectory_buffer=BufferedTrajectoryIter(data,all_trajectories=trajectory_names_train,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go= parameters["store_rewards2go"])#TODO store_rewards2go=parameters["store_rewards2go"])
+                trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,all_trajectories=trajectory_names_validate,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
+                
+        else:        
+                trajectory_buffer=BufferedTrajectoryIter(data,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
+                trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
+        trajectory_buffer_iter=trajectory_buffer.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters)+warmup_steps)        
         trajectory_buffer_iter_validation=trajectory_buffer_validation.buffered_batch_iter(batch_size,num_batches=(validation_steps*max_iters))#TODO make this dependent on num of validation iterations
+                
+                
 
         def get_batch(batch_size=64, max_len=max_length, validation=False):
                 actionBatch=[]
                 obsBatch=[]
+                stateBatch=[]
                 rewardsBatch=[]
                 doneBatch=[]
                 rtgBatch=[]
@@ -158,6 +168,8 @@ def main(parameters):
                                 #We feed  max_length timesteps into Decision Transformer, for a total of 3*max_length tokens 
                                 sequence_lenght=sequence["observations_pov"].shape[0]
                                 obsBatch.append(sequence["observations_pov"])
+                                if state_vector:
+                                        stateBatch.append(sequence["observations_vector"])
                                 actionBatch.append(sequence["actions"])
                                 rewardsBatch.append(sequence["rewards"])
                                 doneBatch.append(sequence["done"])
@@ -178,32 +190,34 @@ def main(parameters):
                                         rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rtgBatch[-1]], axis=0)
                                 else:
                                         rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rtgBatch[-1]], axis=0)
+                                if state_vector:
+                                        stateBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , stateBatch[-1]], axis=0)
                                 
                                 timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
                                 mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
-                #obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)#change to int only if discrete actions
                 
                 if pov_encoder == "linear":
-                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256).flatten(start_dim=2)#change to int only if discrete actions
+                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256).flatten(start_dim=2)
                 elif pov_encoder == "cnn":
                         obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256)
                 elif pov_encoder == "vq_vae":
-                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device)        
+                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device) 
+     
 
-
-                        
+                stateBatch= th.tensor(actionBatch).to(dtype=th.float32, device=device)       
                 actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
                 rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
                 rtgBatch = th.tensor(rtgBatch).to(dtype=th.float32, device=device)   
                 timesteps = th.tensor(timesteps).to(dtype=th.long, device=device)
                 mask = th.tensor(mask).to(device=device)
-                return obsBatch,actionBatch,rewardsBatch,doneBatch ,rtgBatch,timesteps,mask
+                return obsBatch,stateBatch,actionBatch,rewardsBatch,doneBatch ,rtgBatch,timesteps,mask
         model = DecisionTransformer(
+            pov_dim=pov_dim,
             state_dim=state_dim,
             act_dim=act_dim,
             max_length=max_length,
             max_ep_len=max_ep_len_dataset,#diferent from max_ep_len because theres a bug where the dataset has trajectories bigger than the maximun episode lenght of the enviroment
-            discrete_rewards=None,#TODO actually add this in case of discrete rewards #1095,#1095 is the number of posible reward combinations in the minerl enviroment, though most are very unlikel
+            discrete_rewards=None,
             kmeans_centroids=action_centroids,
             discrete_states=discrete_states,
             hidden_size=parameters['embed_dim'],
@@ -233,10 +247,11 @@ def main(parameters):
                                 with th.no_grad(): 
                                         ret, length = evaluate_episode_rtg(
                                                 env,
-                                                state_dim,
+                                                pov_dim,
                                                 act_dim,
                                                 model,
                                                 vae_model,
+                                                state_vector_dim=state_dim,
                                                 action_centroids=action_centroids,
                                                 max_ep_len=max_ep_len,
                                                 scale=1,#TODO check if reward scalling would make sense
@@ -251,8 +266,6 @@ def main(parameters):
                                 f'target_{target_rew}_return_mean': np.mean(returns),
                                 f'target_{target_rew}_return_std': np.std(returns),
                                 f'target_{target_rew}_return_max': np.max(returns),
-                                #f'target_{target_rew}_length_mean': np.mean(lengths),
-                                #f'target_{target_rew}_length_std': np.std(lengths),
                         }
                 return fn
         def validation_fn(model):
@@ -261,7 +274,7 @@ def main(parameters):
                         with th.no_grad(): 
                                 ret=evaluate_validation_rtg(
                                 env,
-                                state_dim,
+                                pov_dim,
                                 act_dim,
                                 model,
                                 get_batch,
@@ -328,54 +341,56 @@ def main(parameters):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-
-    parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0')
-    parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')
-    parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0')
-    parser.add_argument('--validation_steps', type=int, default=10)
-    #parser.add_argument('--validation_trajectories', type=str, default=5)#if the validation dataset is the same as the train dataset separate a fraction of it?TODO(maybe do this at the dataset level instead manually)
-    parser.add_argument('--target_rewards', nargs='+', default=[64])#Accepts multiple imputs#TODO!!! fix bug where it interpres this as an int
-    parser.add_argument('--vectorize_actions' , type=bool, default=False)#TODO make this automatic
-    parser.add_argument('--visualize' , type=bool, default=False)
-    parser.add_argument('--record' , type=bool, default=False)
-    parser.add_argument('--max_ep_len', type=int, default=18000)#default of the diamond env
-    parser.add_argument('--max_ep_len_dataset', type=int, default=65536)#nice round number thats almost
-    parser.add_argument('--mode', type=str, default='normal')  # normal for standard setting, delayed for sparse
-    parser.add_argument('--K', type=int, default=20)#TODO maybe rename or change how it works to have diferent sizes of embedings for rewards
-    parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--buffer_target_size', type=int, default=3000)#Has to be bigger than the biggest trajectory on your dataset or it will try downloading it.TODO fix that.
-    parser.add_argument('--buffer_target_size_validation', type=int, default=3000)
-    parser.add_argument('--store_rewards2go', type=bool, default=False)
-    parser.add_argument('--model_type', type=str, default='dt')  # dt for decision transformer, bc for behavior cloning
-    parser.add_argument('--embed_dim', type=int, default=256)#TODO fix this so it doest crash whenever its not 128
-    parser.add_argument('--n_layer', type=int, default=3)
-    parser.add_argument('--n_head', type=int, default=1)
-    parser.add_argument('--activation_function', type=str, default='relu')
-    parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-4)
-    parser.add_argument('--weight_decay', '-wd', type=float, default=1e-4)
-    parser.add_argument('--warmup_steps', type=int, default=100)
-    parser.add_argument('--num_eval_episodes', type=int, default=1)
+    parser.add_argument('--mode', type=str, default='normal')#not usefull currently
+    #General parameters    
     parser.add_argument('--max_iters', type=int, default=100)
     parser.add_argument('--num_steps_per_iter', type=int, default=100)
     parser.add_argument('--num_validation_iters', type=int, default=10)#num of validation iterations before running the minerl env.
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--log_to_wandb', '-w', type=bool, default=False)
-    parser.add_argument('--group_name','-g' , type=str, default="vqvae_diamond_fixed_embed_dim_debugged_vq_vae")
+    parser.add_argument('--group_name','-g' , type=str, default="tfm")
     parser.add_argument('--use_checkpoint', type=bool, default=False)#TODo eliminate and replace whith just havign a checkpooint name
     parser.add_argument('--model_name', type=str, default="decisiontransformers_convolution")
+    #Enviroment and Data parameters
+    parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0')
+    parser.add_argument('--vectorize_actions' , type=bool, default=False)#TODO make this automatic
+    parser.add_argument('--visualize' , type=bool, default=False)
+    parser.add_argument('--record' , type=bool, default=False)
+    parser.add_argument('--max_ep_len', type=int, default=18000)#default of the diamond env
+    parser.add_argument('--max_ep_len_dataset', type=int, default=65536)#nice round number thats almost
+    parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')
+    parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0')
+    parser.add_argument('--buffer_target_size', type=int, default=18000)
+    parser.add_argument('--buffer_target_size_validation', type=int, default=3000)
+    parser.add_argument('--store_rewards2go', type=bool, default=False)
+    #Training hyperparameters
+    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--learning_rate', '-lr', type=float, default=0.02)
+    parser.add_argument('--weight_decay', '-wd', type=float, default=1e-4)
+    parser.add_argument('--warmup_steps', type=int, default=100)
+    #Evaluation parameters
+    parser.add_argument('--num_eval_episodes', type=int, default=1)
+    parser.add_argument('--validation_steps', type=int, default=10)
+    parser.add_argument('--validation_trajectories', type=int, default=5)
+    parser.add_argument('--target_rewards', nargs='+', default=[1571])#Accepts multiple imputs#TODO!!! fix bug where it interprets this as an int       
+    #Model parameters
+    parser.add_argument('--embed_dim', type=int, default=256)
+    parser.add_argument('--n_layer', type=int, default=3)
+    parser.add_argument('--n_head', type=int, default=1)
+    parser.add_argument('--K', type=int, default=20)
     parser.add_argument('--pov_encoder', type=str, default="linear")
     parser.add_argument('--state_vector', type=bool, default=False)
-    #VQ_VAE configurations
+    parser.add_argument('--activation_function', type=str, default='relu')
+    #VQ_VAE parameters
     parser.add_argument('--vae_model', type=str, default="embedingdim_1")
     parser.add_argument('--vae_embedings', type=int, default=65536)
     parser.add_argument('--vae_embedding_dim', type=int, default=1)
-    #Dicretize actions configurations
-    parser.add_argument('--kmeans_actions', type=bool, default=False)#TODO????? make this actually work , currently causes strange errors.
-    parser.add_argument('--kmeans_action_centroids', type=int, default=128)#TODO make this actually work , currently causes strange errors.
-    parser.add_argument('--discrete_rewards', type=bool, default=False)#TODO make this actually work, needs some way of mapping actions to specific indices
+    #Dicretize actions parameters
+    parser.add_argument('--kmeans_actions', type=bool, default=False)
+    parser.add_argument('--kmeans_action_centroids', type=int, default=128)
+    #parser.add_argument('--discrete_rewards', type=bool, default=False)#TODO Not implemented
     
-    #TODO make it so save files are generated depending on parameters
     args = parser.parse_args()
 
     main(parameters=vars(args))

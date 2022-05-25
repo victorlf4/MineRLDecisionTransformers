@@ -7,10 +7,10 @@ from training.trainer import Trainer
 class SequenceTrainer(Trainer):
 
     def train_step(self):
-        states, actions, rewards, dones, rtg, timesteps, attention_mask = self.get_batch(self.batch_size)
+        povs,states, actions, rewards, dones, rtg, timesteps, attention_mask = self.get_batch(self.batch_size)
         action_target = torch.clone(actions)
-        state_preds, action_preds, reward_preds = self.model.forward(
-            states, actions, rewards, rtg, timesteps, attention_mask=attention_mask, #rtg[:,:-1]??? in original
+        state_preds,pov_preds, action_preds, reward_preds = self.model.forward(
+            povs, actions, rewards, rtg, timesteps,state_vector=states, attention_mask=attention_mask, #rtg[:,:-1]??? in original
         )
         act_dim = action_preds.shape[2]
         action_preds = action_preds.reshape(-1, act_dim)[attention_mask.reshape(-1) > 0]
@@ -19,7 +19,7 @@ class SequenceTrainer(Trainer):
             None, action_preds, None,
             None, action_target, None,
         )
-
+        
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), .25)

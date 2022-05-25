@@ -1,3 +1,4 @@
+from ctypes import util
 import minerl
 import os
 import time
@@ -24,7 +25,7 @@ def calculateReward2go(trajectory):
                     for dataset_observation, dataset_action, dataset_reward, _, done,timesteps in trajectory:
                                 rewards.append(dataset_reward)
                     return reward2go(rewards)
-#TODO add an option to separate n trajectories as validation
+
 class BufferedTrajectoryIter:#TODO, add another version that samples whithout repetition
         def __init__(self,
                  data_pipeline,
@@ -47,11 +48,12 @@ class BufferedTrajectoryIter:#TODO, add another version that samples whithout re
             # which trajectories we haven't yet used in a given epoch
             self.available_trajectories = deepcopy(self.all_trajectories)
             random.shuffle(self.available_trajectories)
-        def optionally_fill_buffer(self):
+        def optionally_fill_buffer(self,batch_size):
                 buffer_updated = False
                 # Add trajectories to the buffer if the remaining space is
                 # greater than our anticipated trajectory size (in the form of the empirical average)
-                while (self.buffer_target_size - len(self.data_buffer)) > self.avg_traj_size:
+                while ((self.buffer_target_size - (len(self.data_buffer)*self.sequence_size)) > self.avg_traj_size) or len(self.data_buffer)<=(batch_size*2):
+
                     if len(self.available_trajectories) == 0:
                         return
                     traj_to_load = self.available_trajectories.pop()
@@ -131,14 +133,14 @@ class BufferedTrajectoryIter:#TODO, add another version that samples whithout re
                     return
                 # Refill the buffer if we need to
                 # (doing this before getting batch so it'll run on the first iteration)
-                self.optionally_fill_buffer()
+                self.optionally_fill_buffer(batch_size)
                 ret_batch = self.get_batch(batch_size=batch_size)
                 batch_count += 1
                 if len(self.data_buffer) < batch_size:
                     assert len(self.available_trajectories) == 0, "You've reached the end of your " \
                                                                 "data buffer while still having " \
                                                                 "trajectories available; " \
-                                                                "something seems to have gone wrong"
+                                                                "something seems to have gone wrong" 
                     epoch_count += 1
                     self.available_trajectories = deepcopy(self.all_trajectories)
                     random.shuffle(self.available_trajectories)
@@ -149,13 +151,14 @@ class BufferedTrajectoryIter:#TODO, add another version that samples whithout re
 
 if __name__ == "__main__":
 
-    env = "MineRLBasaltMakeWaterfall-v0"
+    #env = "MineRLBasaltFindCave-v0"
+    env ="MineRLObtainDiamondVectorObf-v0"
     test_batch_size = 32
 
     start_time = time.time()
-    minerl.data.download(directory='data', environment=env)#TODO codigo de baselines competition
+    minerl.data.download(directory='data', environment=env)
     data_pipeline =   minerl.data.make(env,  data_dir='data')
-    bbi = BufferedTrajectoryIter(data_pipeline, buffer_target_size=10000)
+    bbi = BufferedTrajectoryIter(data_pipeline, buffer_target_size=10000,sequence_size=20,reward_to_go=True,store_rewards2go=False)
     num_timesteps = 0
     for data_dict in bbi.buffered_batch_iter(batch_size=test_batch_size, num_epochs=1):
         num_timesteps += 1

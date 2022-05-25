@@ -349,16 +349,10 @@ class VectorQuantizerVAE:
         
         self.model.eval()
         valid_originals = next(iter(validation_iterator))
-        '''if len(valid_originals) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
-            valid_originals=valid_originals[0]
-        '''#TODO fix this
         valid_originals = valid_originals.to(self.device)
         vq_output_eval = self.model._pre_vq_conv(self.model._encoder(valid_originals))
         _, valid_quantize, _, _ = self.model._vq_vae(vq_output_eval)
         valid_reconstructions = self.model._decoder(valid_quantize)
-        #train_originals = next(iter(self.training_loader))[0]
-        #train_originals = train_originals.to(self.device)
-        #_, train_reconstructions, _, _ = self.model._vq_vae(train_originals)
         show(make_grid(valid_reconstructions.cpu().data), )
         show(make_grid(valid_originals.cpu()))
     def evalImage(self,image):
@@ -392,7 +386,6 @@ class VectorQuantizerVAE:
     def quantize(self,image):
         #if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
             #image=image[0]
-        #TODO reimplement skipping labels so I can run tests whith cifar, maybe as an option
         image= image.to(self.device)
         with torch.no_grad():
             vq_output = self.model._pre_vq_conv(self.model._encoder(image))

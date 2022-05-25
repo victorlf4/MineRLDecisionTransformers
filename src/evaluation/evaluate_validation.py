@@ -25,10 +25,10 @@ def evaluate_validation_rtg(
     model.to(device=device)
     validation_losses = []
     for batch in range(validation_batches):
-        states, actions, rewards, dones, rtg, timesteps, attention_mask = get_batch(batch_size,validation=True)
+        povs,state, actions, rewards, dones, rtg, timesteps, attention_mask = get_batch(batch_size,validation=True)
         action_target = torch.clone(actions)
-        state_preds, action_preds, reward_preds = model.forward(
-                states, actions, rewards, rtg, timesteps, attention_mask=attention_mask, #rtg[:,:-1]??? in original
+        state_preds,pov_preds, action_preds, reward_preds = model.forward(
+                povs, actions, rewards, rtg, timesteps, attention_mask=attention_mask,state_vector=state #rtg[:,:-1]??? in original
             )
            
         act_dim = action_preds.shape[2]

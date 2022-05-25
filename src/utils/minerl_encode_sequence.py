@@ -21,7 +21,6 @@ def minerlEncodeSequence(trajectory,device,discrete_rewards=False,vae_model=None
                     sequence_dones.append(done)
                     sequence_rtg.append(rtg)
                     sequence_timesteps.append(timesteps)
-            #vae_model.eval(iter((th.tensor(sequence_pov_obs,dtype=th.float32).div(256),)))#TODO erase test
             if vae_model:
                     sequence_pov_obs=np.array(sequence_pov_obs).transpose(0,3,1,2)
                     sequence_pov_obs=th.tensor(sequence_pov_obs,dtype=th.float32).to(device).div(256)
