@@ -225,7 +225,7 @@ def main(parameters):
             n_head=parameters['n_head'],
             n_inner=4*parameters['embed_dim'],
             activation_function=parameters['activation_function'],
-            n_positions=1024,
+            n_positions=1048576,
             resid_pdrop=parameters['dropout'],
             attn_pdrop=parameters['dropout'],
             natureCNN=convolution_head)
