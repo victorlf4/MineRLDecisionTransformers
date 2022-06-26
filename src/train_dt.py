@@ -202,9 +202,12 @@ def main(parameters):
                         obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256)
                 elif pov_encoder == "vq_vae":
                         obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device) 
-     
-
-                stateBatch= th.tensor(actionBatch).to(dtype=th.float32, device=device)       
+               
+                if state_vector:
+                        stateBatch= th.tensor(stateBatch).to(dtype=th.float32, device=device) 
+                else:
+                        stateBatch=None  
+   
                 actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
                 rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
                 rtgBatch = th.tensor(rtgBatch).to(dtype=th.float32, device=device)   
@@ -225,7 +228,7 @@ def main(parameters):
             n_head=parameters['n_head'],
             n_inner=4*parameters['embed_dim'],
             activation_function=parameters['activation_function'],
-            n_positions=1048576,
+            n_positions=1024,
             resid_pdrop=parameters['dropout'],
             attn_pdrop=parameters['dropout'],
             natureCNN=convolution_head)
@@ -307,7 +310,7 @@ def main(parameters):
         )
         if log_to_wandb:
                 wandb.init(
-                        name=f'{parameters["group_name"]}-{parameters["model_name"]}',#TODO test using checkpoint name as name if avaliable
+                        name=f'{parameters["group_name"]}-{parameters["model_name"]}',
                         group=parameters["group_name"],
                         project='decision-transformer_TFM',
                         config=parameters)
@@ -373,7 +376,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_eval_episodes', type=int, default=1)
     parser.add_argument('--validation_steps', type=int, default=10)
     parser.add_argument('--validation_trajectories', type=int, default=5)
-    parser.add_argument('--target_rewards',type=int, nargs='+', default=[1571])#Accepts multiple imputs#TODO!!! fix bug where it interprets this as an int       
+    parser.add_argument('--target_rewards',type=int, nargs='+', default=[1571])#Accepts multiple imputs     
     #Model parameters
     parser.add_argument('--embed_dim', type=int, default=256)
     parser.add_argument('--n_layer', type=int, default=3)

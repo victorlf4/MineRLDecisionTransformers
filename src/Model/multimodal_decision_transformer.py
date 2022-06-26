@@ -130,8 +130,8 @@ class DecisionTransformer(nn.Module):
    
         
         
-        #self.predict_return = torch.nn.Linear(hidden_size, 1)
-        self.predict_return = lambda x: x #TODO! make this an option
+        self.predict_return = torch.nn.Linear(hidden_size, 1)
+        #self.predict_return = lambda x: x #TODO! make this an option
 
     def forward(self, pov, actions, rewards, returns_to_go,timesteps,state_vector=None, attention_mask=None):#TODO maybe call diferent methods for the diferetn options from this forward for redability
 

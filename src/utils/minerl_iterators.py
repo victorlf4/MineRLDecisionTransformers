@@ -26,7 +26,7 @@ class MinerlActionIterator(th.utils.data.IterableDataset):
         self.iterator=self.buffer.buffered_batch_iter(batch_size=1,num_epochs=num_epochs, num_batches=num_batches)
 
     def __next__(self):
-        _, _, _, dataset_action, _ = next(self.iterator)
+        _, dataset_action, _, _, _ = next(self.iterator)
         if self.transform:
             return self.transform(np.squeeze(dataset_action["vector"]))
         else:
@@ -35,4 +35,26 @@ class MinerlActionIterator(th.utils.data.IterableDataset):
         
     def __iter__(self):
         return self
-        
+import time      
+import minerl
+if __name__ == "__main__":
+
+    env = "MineRLTreechopVectorObf-v0"
+    #env ="MineRLObtainDiamondVectorObf-v0"
+    test_batch_size = 32
+    num_timesteps=0
+    #minerl.data.download(directory='data', environment=env)
+    data_pipeline =   minerl.data.make(env,  data_dir='data')
+    action_iterator =MinerlActionIterator(data_pipeline)
+    start_time = time.time()
+    
+    action_samples=[]
+    for i in range(100000):
+        action_samples.append(next(action_iterator))
+        num_timesteps += 1
+        #print(next(action_iterator))
+    unique_data = [list(x) for x in set(tuple(x) for x in action_samples)]
+    print(unique_data)
+    print(f"{len(unique_data)} unique arrays found for env {env} using batch_iter")
+    end_time = time.time()
+    print(f"Total time: {end_time - start_time} seconds")        

@@ -21,7 +21,7 @@ def main(parameters):
         env_targets=parameters["target_rewards"]
         visualize=True
         #model_params
-        max_length=parameters["max_ep_len_dataset"]
+        max_length=parameters["K"]
         max_ep_len_dataset=parameters["max_ep_len_dataset"]
         discrete_states=None
         pov_encoder =parameters["pov_encoder"]
@@ -56,7 +56,7 @@ def main(parameters):
                 n_head=parameters['n_head'],
                 n_inner=4*parameters['embed_dim'],
                 activation_function=parameters['activation_function'],
-                n_positions=1048576,
+                n_positions=1024,
                 resid_pdrop=parameters['dropout'],
                 attn_pdrop=parameters['dropout'],
                 natureCNN=convolution_head)
