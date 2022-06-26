@@ -38,23 +38,18 @@ class VectorQuantizerEMA(nn.Module):
         # convert inputs from BCHW -> BHWC
         inputs = inputs.permute(0, 2, 3, 1).contiguous()
         input_shape = inputs.shape
-        
         # Flatten input
         flat_input = inputs.view(-1, self._embedding_dim)
-        
+
         # Calculate distances
-        distances = (torch.sum(flat_input**2, dim=1, keepdim=True) 
-                    + torch.sum(self._embedding.weight**2, dim=1)
-                    - 2 * torch.matmul(flat_input, self._embedding.weight.t()))
-            
+        distances = torch.cdist(flat_input,self._embedding.weight)
+        
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
         encodings = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
         encodings.scatter_(1, encoding_indices, 1)
-        
         # Quantize and unflatten
         quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
-        
         # Use EMA to update the embedding vectors
         if self.training:
             self._ema_cluster_size = self._ema_cluster_size * self._decay + \
@@ -79,9 +74,11 @@ class VectorQuantizerEMA(nn.Module):
         quantized = inputs + (quantized - inputs).detach()
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
-        
         # convert quantized from BHWC -> BCHW
-        return loss, quantized.permute(0, 3, 1, 2).contiguous(), perplexity, encodings
+        
+        return loss, quantized.permute(0, 3, 1, 2).contiguous(), perplexity, encoding_indices
+
+
 
 
 
@@ -108,15 +105,12 @@ class VectorQuantizer(nn.Module):
         flat_input = inputs.view(-1, self._embedding_dim)
         
         # Calculate distances
-        distances = (torch.sum(flat_input**2, dim=1, keepdim=True) 
-                    + torch.sum(self._embedding.weight**2, dim=1)
-                    - 2 * torch.matmul(flat_input, self._embedding.weight.t()))#torch.cdist(flat_inputs,self.embeddings.weight)? aparetemente equivalente
+        distances = torch.cdist(flat_input,self.embeddings.weight)
             
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
         encodings = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
         encodings.scatter_(1, encoding_indices, 1)
-        
         # Quantize and unflatten
         quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
         
@@ -125,14 +119,14 @@ class VectorQuantizer(nn.Module):
         q_latent_loss = F.mse_loss(quantized, inputs.detach())
         loss = q_latent_loss + self._commitment_cost * e_latent_loss
 
-        #hack to pass through the gradient of the imput part since the encode and quantize part is not diferenciable
+        #Straight Through Estimator of the qunatization(since its not diferenciable)
         quantized = inputs + (quantized - inputs).detach()
 
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
         
         # convert quantized from BHWC -> BCHW
-        return loss, quantized.permute(0, 3, 1, 2).contiguous(), perplexity, encodings
+        return loss, quantized.permute(0, 3, 1, 2).contiguous(), perplexity, encoding_indices
 
 class Residual(nn.Module):
     def __init__(self, in_channels, num_hiddens, num_residual_hiddens):
@@ -269,7 +263,8 @@ class VectorQuantizerVAE:
         ,embedding_dim = 64
         ,num_embeddings = 512
      ,commitment_cost = 0.25,
-        decay = 0.99):
+        decay = 0.99,
+        device_name ="cuda"):
         self.train_res_recon_error = []
         self.train_res_perplexity = []
         self.model_name=model_name
@@ -286,11 +281,13 @@ class VectorQuantizerVAE:
         self.num_embeddings = num_embeddings
 
         self.commitment_cost = commitment_cost
-
         self.decay = decay
         #create model and optimizer
-        self._checkpoint_file ="./models/"+self.model_name                          
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._checkpoint_file ="./models/"+self.model_name       
+        if device_name=="cuda":                   
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device_name)
         self.model = Model(self.num_hiddens, self.num_residual_layers, self.num_residual_hiddens,
                 self.num_embeddings, self.embedding_dim, 
                 self.commitment_cost, self.decay).to(self.device)
@@ -298,14 +295,7 @@ class VectorQuantizerVAE:
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, amsgrad=False)
         
 
-    def train(self,training_data,data_variance):
-        self.training_loader = DataLoader(training_data, #maybe self?
-                                    batch_size=self.batch_size, 
-                                    shuffle=True,
-                                    pin_memory=True)
-        
-       
-
+    def train(self,training_iterator,data_variance):
         if os.path.exists(self._checkpoint_file):
             self.load()
 
@@ -313,9 +303,13 @@ class VectorQuantizerVAE:
       
 
         for i in xrange(self.num_training_updates):
-            data= next(iter(self.training_loader))[0] #(data, _) = next(iter(self.training_loader)) changed cause it crashed when recievign 1 element tuple
+            data= next(iter(training_iterator)) #(data, _) = next(iter(self.training_loader)) changed cause it crashed when recievign 1 element tuple
+            if len(data) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+                data=data[0]
+    
             data = data.to(self.device)
             self.optimizer.zero_grad()
+            #print(torch.cuda.memory_allocated(device=self.device))
 
             vq_loss, data_recon, perplexity = self.model(data)
             recon_error = F.mse_loss(data_recon, data) / data_variance
@@ -351,23 +345,29 @@ class VectorQuantizerVAE:
         ax.set_xlabel('iteration')
         plt.show()
 
-    def eval(self,validation_data):
-        self.validation_loader = DataLoader(validation_data,
-                                    batch_size=32,
-                                    shuffle=True,
-                                    pin_memory=True)
+    def eval(self,validation_iterator):
+        
         self.model.eval()
-        valid_originals = next(iter(self.validation_loader))[0]
+        valid_originals = next(iter(validation_iterator))
         valid_originals = valid_originals.to(self.device)
-
         vq_output_eval = self.model._pre_vq_conv(self.model._encoder(valid_originals))
         _, valid_quantize, _, _ = self.model._vq_vae(vq_output_eval)
         valid_reconstructions = self.model._decoder(valid_quantize)
-        #train_originals = next(iter(self.training_loader))[0]
-        #train_originals = train_originals.to(self.device)
-        #_, train_reconstructions, _, _ = self.model._vq_vae(train_originals)
         show(make_grid(valid_reconstructions.cpu().data), )
         show(make_grid(valid_originals.cpu()))
+    def evalImage(self,image):
+        
+        self.model.eval()
+        valid_original = image
+        valid_original = valid_original.to(self.device)
+
+        vq_output_eval = self.model._pre_vq_conv(self.model._encoder(valid_original))
+        _, valid_quantize, _, _ = self.model._vq_vae(vq_output_eval)
+        valid_reconstructions = self.model._decoder(valid_quantize)
+        valid_reconstructions=torch.squeeze(valid_reconstructions)
+        valid_original=torch.squeeze(valid_original)
+        show(valid_reconstructions.cpu().data)
+        show(valid_original.cpu())
 
     def showEmbedding(self):
         proj = umap.UMAP(n_neighbors=3,
@@ -376,10 +376,39 @@ class VectorQuantizerVAE:
         plt.scatter(proj[:,0], proj[:,1], alpha=0.3)
         plt.show()
     def encode(self,image):
-        #image= image.to(self.device)
-        vq_output = self.model._pre_vq_conv(self.model._encoder(image))
-        _, quantized, _, _ = self.model._vq_vae(vq_output)
+        if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+            image=image[0]
+        image= image.to(self.device)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        return encodings
+    def quantize(self,image):
+        #if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+            #image=image[0]
+        image= image.to(self.device)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
         return quantized
+    def encodeSingle(self,image):
+        if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+            image=image[0]
+        image= torch.unsqueeze(image,0)
+        image= image.to(self.device)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        return encodings
+    def quantizeSingle(self,image):
+        if len(image) == 2: #Hacky solution to some datasets sending (image,label) tuples instead of labels
+            image=image[0]
+        image= torch.unsqueeze(image,0)
+        image= image.to(self.device)
+        with torch.no_grad():
+            vq_output = self.model._pre_vq_conv(self.model._encoder(image))
+            _, quantized, _, encodings = self.model._vq_vae(vq_output)
+        return quantized    
     def save(self,epoch):
         torch.save({
             'epoch': epoch,
