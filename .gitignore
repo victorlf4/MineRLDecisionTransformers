@@ -1,5 +1,5 @@
-video/*
-data/*
+
+
 wandb/*
 logs/*
 
@@ -438,3 +438,4 @@ models/testfinaltfm7
 models/testfinaltfm8
 models/test
 models/test (copia)
+.gitignore
