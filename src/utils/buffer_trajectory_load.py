@@ -18,7 +18,7 @@ def reward2go(rewards):
                 return rewards2go
 
 def divide_sequences(list, sequence_lenght):
-    return (list[i:i+sequence_lenght] for i in range(0, len(list), sequence_lenght))#TODO handle sequences no divisible by seq len
+    return (list[i:i+sequence_lenght] for i in range(0, len(list), sequence_lenght))
 
 def calculateReward2go(trajectory):
                     rewards=[]

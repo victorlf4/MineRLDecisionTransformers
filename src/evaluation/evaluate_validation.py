@@ -14,7 +14,6 @@ def evaluate_validation_rtg(
         get_batch,
         batch_size,
         loss_fn,
-        action_centroids=None,#if we are using kmeans
         validation_batches=10,
         scale=1000.,
         device='cuda',

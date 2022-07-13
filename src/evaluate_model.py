@@ -6,6 +6,8 @@ from utils.enviroment_utils import load_env
 import torch as th
 import argparse
 from evaluation.evaluate_episodes import evaluate_episode_rtg
+import os
+from  Model.vq_vae import VectorQuantizerVAE as vq_vae
 
 def main(parameters):
         checkpoint_file ="./models/"+parameters['model_name']
@@ -14,8 +16,20 @@ def main(parameters):
         env,_=load_env(dataset_name,record=parameters["record"],vectorize_actions=parameters["vectorize_actions"])
         device=parameters["device"]
         act_dim=env.action_space["vector"].shape[0]
-        vae_model=None
-        action_centroids=None
+       
+
+        def load_kmeans():
+                checkpoint_kmeans = th.load(checkpoint_file+"_kmeans")
+                action_centroids=checkpoint_kmeans['action_centroids']
+                return action_centroids.to(device)
+        if (parameters["kmeans_actions"]):
+                action_centroids=load_kmeans()
+        else:
+                action_centroids=None
+        #if os.path.exists(checkpoint_file+"_kmeans"):
+       
+  
+
         max_ep_len=parameters["max_ep_len"]
         mode="normal"
         env_targets=parameters["target_rewards"]
@@ -26,6 +40,12 @@ def main(parameters):
         discrete_states=None
         pov_encoder =parameters["pov_encoder"]
         natureCNN= pov_encoder == "cnn"
+        if pov_encoder == "vq_vae":
+                vae_model=vq_vae(parameters["vae_model"],embedding_dim = parameters["vae_embedding_dim"],num_embeddings =parameters["vae_embedings"],device_name=parameters["device"],batch_size=32)
+                vae_model.load()
+        else:
+                vae_model=None
+
         if pov_encoder == "vq_vae":
                 pov_dim=(256*parameters["vae_embedding_dim"],) #TODO actually figure out why its 256 
                 convolution_head= False
@@ -70,33 +90,33 @@ def main(parameters):
         print(count_parameters(model))  
              
         def eval_episodes(target_rew):
-            returns, lengths = [], []
-            for _ in range(num_eval_episodes):
-                    with th.no_grad(): 
-                            ret, length = evaluate_episode_rtg(
-                                    env,
-                                    pov_dim,
-                                    act_dim,
-                                    model,
-                                    vae_model,
-                                    state_vector_dim=state_dim,
-                                    action_centroids=action_centroids,
-                                    max_ep_len=max_ep_len,
-                                    scale=1,#TODO check if scalling would make sense
-                                    target_return=target_rew/1,
-                                    mode=mode,
-                                    device=device,
-                                    visualize=visualize
-                                    )
-                    returns.append(ret)
-                    lengths.append(length)
-            return {
-                    f'target_{target_rew}_return_mean': np.mean(returns),
-                    f'target_{target_rew}_return_std': np.std(returns),
-                    f'target_{target_rew}_return_max': np.max(returns),
-                    #f'target_{target_rew}_length_mean': np.mean(lengths),
-                    #f'target_{target_rew}_length_std': np.std(lengths),
-            }
+                def fn(model):
+                        returns, lengths = [], []
+                        for _ in range(num_eval_episodes):
+                                with th.no_grad(): 
+                                        ret, length = evaluate_episode_rtg(
+                                                env,
+                                                pov_dim,
+                                                act_dim,
+                                                model,
+                                                vae_model,
+                                                state_vector_dim=state_dim,
+                                                action_centroids=action_centroids,
+                                                max_ep_len=max_ep_len,
+                                                scale=1,#TODO check if reward scalling would make sense
+                                                target_return=target_rew/1,
+                                                mode=mode,
+                                                device=device,
+                                                visualize=visualize
+                                                )
+                                returns.append(ret)
+                                lengths.append(length)
+                        return {
+                                f'target_{target_rew}_return_mean': np.mean(returns),
+                                f'target_{target_rew}_return_std': np.std(returns),
+                                f'target_{target_rew}_return_max': np.max(returns),
+                        }
+                return fn
         eval_fns=[eval_episodes(tar) for tar in env_targets]
 
         for eval_fn in eval_fns:
@@ -121,7 +141,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.1)
     #Evaluation parameters
     parser.add_argument('--num_eval_episodes', type=int, default=1)
-    parser.add_argument('--target_rewards', nargs='+', default=[1571,547,67,0])#Accepts multiple imputs#TODO!!! fix bug where it interprets this as an int       
+    parser.add_argument('--target_rewards',type=int, nargs='+', default=[1571,547,67,0])#Accepts multiple imputs#TODO!!! fix bug where it interprets this as an int       
     #Model parameters
     parser.add_argument('--embed_dim', type=int, default=128)#TODO fix this so it doest crash whenever its not 128
     parser.add_argument('--n_layer', type=int, default=3)
@@ -136,7 +156,6 @@ if __name__ == '__main__':
     parser.add_argument('--vae_embedding_dim', type=int, default=1)
     #Dicretize actions parameters
     parser.add_argument('--kmeans_actions', type=bool, default=False)
-    parser.add_argument('--kmeans_action_centroids', type=int, default=128)
     #parser.add_argument('--discrete_rewards', type=bool, default=False)#TODO not implemented
     args = parser.parse_args()
     parameters=vars(args)
