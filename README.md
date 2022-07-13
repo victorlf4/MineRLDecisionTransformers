@@ -1,16 +1,16 @@
 # MineRLDecisionTransformers
 
 # Overview
-Code for a Decision trasnformers for the enviromnents of the minerl competition based on the [official decision transformers codebase](https://github.com/kzl/decision-transformer)   
+Code for a Decision trasnformers for the enviromnents of the minerl competition based on the [official decision transformers codebase](https://github.com/kzl/decision-transformer).   
 
 # Installation
-Install the minerl [requirements](https://minerl.readthedocs.io/en/latest/tutorials/index.html) and then install the required python libraries whith 
+Install the minerl [requirements](https://minerl.readthedocs.io/en/latest/tutorials/index.html) and then install the required python libraries whith: 
 ```
 pip install -r requirements.text
 ```
 
 # Training and testing the model
-To train a decsion transfomer model whith the default config run 
+To train a decision transfomer model whith the default config run: 
 ```
 python train_dt.py 
 ```
