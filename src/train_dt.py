@@ -115,7 +115,7 @@ def main(parameters):
                 checkpoint_kmeans = th.load(checkpoint_file+"_kmeans")
                 action_centroids=checkpoint_kmeans['action_centroids']
                 return action_centroids.to(device)
-        act_dim = env.action_space["vector"].shape[0]#TODO handle problems whith envoroments and datasets having diferent action spaces
+        act_dim = env.action_space["vector"].shape[0]
         
 
         if discrete_actions:
@@ -138,7 +138,7 @@ def main(parameters):
                 trajectory_names = data.get_trajectory_names()
                 trajectory_names_train=trajectory_names[validation_trajectories:]
                 trajectory_names_validate=trajectory_names[:validation_trajectories]
-                print("num_training trajectories"+str(len(trajectory_names_train)))
+                print("num_training trajectories:"+str(len(trajectory_names_train)))
                 trajectory_buffer=BufferedTrajectoryIter(data,all_trajectories=trajectory_names_train,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go= parameters["store_rewards2go"])#TODO store_rewards2go=parameters["store_rewards2go"])
                 trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,all_trajectories=trajectory_names_validate,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
                 
@@ -191,7 +191,7 @@ def main(parameters):
                                 else:
                                         rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rtgBatch[-1]], axis=0)
                                 if state_vector:
-                                        stateBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, act_dim)) , stateBatch[-1]], axis=0)
+                                        stateBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, state_dim)) , stateBatch[-1]], axis=0)
                                 
                                 timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
                                 mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
@@ -233,7 +233,7 @@ def main(parameters):
             attn_pdrop=parameters['dropout'],
             natureCNN=convolution_head)
         model = model.to(device=device)
-
+        
 
         optimizer = th.optim.AdamW(
         model.parameters(),
@@ -283,7 +283,6 @@ def main(parameters):
                                 get_batch,
                                 batch_size,
                                 loss_fn=lambda s_hat, a_hat, r_hat, s, a, r: th.mean((a_hat - a)**2),
-                                action_centroids=None,#if we are using kmeans
                                 validation_batches=validation_steps,
                                 scale=1.,
                                 device='cuda',
@@ -327,7 +326,6 @@ def main(parameters):
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
 
-
         if os.path.exists(checkpoint_file) and use_checkpoint:
                 print("Loading saved decision transformer model")#TODO make it so weight and biases continues in the same run if possible
                 load()
@@ -346,26 +344,26 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, default='normal')#not usefull currently
     #General parameters    
-    parser.add_argument('--max_iters', type=int, default=100)
-    parser.add_argument('--num_steps_per_iter', type=int, default=100)
-    parser.add_argument('--num_validation_iters', type=int, default=10)#num of validation iterations before running the minerl env.
-    parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--log_to_wandb', '-w', type=bool, default=False)
-    parser.add_argument('--group_name','-g' , type=str, default="tfm")
-    parser.add_argument('--use_checkpoint', type=bool, default=False)#TODo eliminate and replace whith just havign a checkpooint name
-    parser.add_argument('--model_name', type=str, default="decisiontransformers_convolution")
+    parser.add_argument('--max_iters', type=int, default=100,help="Number of iterations to execute during training")
+    parser.add_argument('--num_steps_per_iter', type=int, default=100,help="Number of batches in an iteration")
+    parser.add_argument('--num_validation_iters', type=int, default=10,help="Number of validation iterantions before running minecraft")#num of validation iterations before running the minerl env.
+    parser.add_argument('--device', type=str, default='cuda',help="Device we train on read pytorch documentation for more info")
+    parser.add_argument('--log_to_wandb', '-w', type=bool, default=False,help="logging on weight and biases, requires weight and biases account")
+    parser.add_argument('--group_name','-g' , type=str, default="tfm",help="wandb group name")
+    parser.add_argument('--use_checkpoint', type=bool, default=False,help="If true saves the model each iteration")#TODo eliminate and replace whith just havign a checkpooint name
+    parser.add_argument('--model_name', type=str, default="decisiontransformers_convolution",help="Name of the model used in the checkpoint file and in wandb")
     #Enviroment and Data parameters
-    parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0')
-    parser.add_argument('--vectorize_actions' , type=bool, default=False)#TODO make this automatic
-    parser.add_argument('--visualize' , type=bool, default=False)
-    parser.add_argument('--record' , type=bool, default=False)
-    parser.add_argument('--max_ep_len', type=int, default=18000)#default of the diamond env
-    parser.add_argument('--max_ep_len_dataset', type=int, default=65536)
-    parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0')
-    parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0')
-    parser.add_argument('--buffer_target_size', type=int, default=18000)
-    parser.add_argument('--buffer_target_size_validation', type=int, default=3000)
-    parser.add_argument('--store_rewards2go', type=bool, default=False)
+    parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0', help="MineRl enviroment the model will be evaluated in")
+    parser.add_argument('--vectorize_actions' , type=bool, default=False,help="Necesary to train and evaluate on Basalt envs and datasets")#TODO make this automatic
+    parser.add_argument('--visualize' , type=bool, default=False,help="MineRl enviroment the model will be evaluated in")
+    parser.add_argument('--record' , type=bool, default=False,help="records video, currently only working correctly on evaluate_model")
+    parser.add_argument('--max_ep_len', type=int, default=18000,help="max lenght of an evaluation episode in frames")#default of the diamond env
+    parser.add_argument('--max_ep_len_dataset', type=int, default=65536,help="Maximun lenght of a trajectory in the dataset in frames,affects temporal encoder size")
+    parser.add_argument('--dataset', type=str, default='MineRLObtainDiamondVectorObf-v0',help="Dataset used for training")
+    parser.add_argument('--dataset_validation', type=str, default='MineRLObtainIronPickaxeVectorObf-v0',help="Dataset used for validation")
+    parser.add_argument('--buffer_target_size', type=int, default=3000,help="size of the buffer used for loading from the training dataset")
+    parser.add_argument('--buffer_target_size_validation', type=int, default=3000,help="size of the buffer used for loading from the  validation dataset")
+    parser.add_argument('--store_rewards2go', type=bool, default=False,help="stores calculated reward to go on ram")
     #Training hyperparameters
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--dropout', type=float, default=0.1)
@@ -378,20 +376,20 @@ if __name__ == '__main__':
     parser.add_argument('--validation_trajectories', type=int, default=5)
     parser.add_argument('--target_rewards',type=int, nargs='+', default=[1571])#Accepts multiple imputs     
     #Model parameters
-    parser.add_argument('--embed_dim', type=int, default=256)
-    parser.add_argument('--n_layer', type=int, default=3)
-    parser.add_argument('--n_head', type=int, default=1)
-    parser.add_argument('--K', type=int, default=20)
-    parser.add_argument('--pov_encoder', type=str, default="linear")
-    parser.add_argument('--state_vector', type=bool, default=False)
+    parser.add_argument('--embed_dim', type=int, default=128,help="dimension of the mbedding of each token")
+    parser.add_argument('--n_layer', type=int, default=3,help="number of layers of the transformer model")
+    parser.add_argument('--n_head', type=int, default=1,help="number of attention heads of the transformer model")
+    parser.add_argument('--K', type=int, default=20 ,help="context window of the model in frames actual size in tokens is x3 or x4 dependin on whether you use state tokens")
+    parser.add_argument('--pov_encoder', type=str, default="linear",choices=["linear","cnn","vq_vae"])
+    parser.add_argument('--state_vector', type=bool, default=False,help="if true adds encoder for state vector to the model")
     parser.add_argument('--activation_function', type=str, default='relu')
     #VQ_VAE parameters
     parser.add_argument('--vae_model', type=str, default="embedingdim_1")
     parser.add_argument('--vae_embedings', type=int, default=65536)
     parser.add_argument('--vae_embedding_dim', type=int, default=1)
     #Dicretize actions parameters
-    parser.add_argument('--kmeans_actions', type=bool, default=False)
-    parser.add_argument('--kmeans_action_centroids', type=int, default=128)
+    parser.add_argument('--kmeans_actions', type=bool, default=False,help="if true runs kmeans the actions to discretize the action space")
+    parser.add_argument('--kmeans_action_centroids', type=int, default=128,help="number of action centroids on the if kmeans actions is used")
     #parser.add_argument('--discrete_rewards', type=bool, default=False)#TODO Not implemented
     
     args = parser.parse_args()
