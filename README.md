@@ -22,7 +22,7 @@ python evaluate_model.py
 
 To train a vq_vae model use:
 ```
-python evaluate_model.py 
+python train_vq_vae.py 
 ```
 
 # Parameters
