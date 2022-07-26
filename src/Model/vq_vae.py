@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import os
 
-
+#VQ_VAE implemtenation from https://colab.research.google.com/github/zalandoresearch/pytorch-vq-vae/blob/master/vq-vae.ipynb
 
 class VectorQuantizerEMA(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost, decay, epsilon=1e-5):

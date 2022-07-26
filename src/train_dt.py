@@ -382,7 +382,7 @@ if __name__ == '__main__':
     parser.add_argument('--K', type=int, default=20 ,help="context window of the model in frames actual size in tokens is x3 or x4 dependin on whether you use state tokens")
     parser.add_argument('--pov_encoder', type=str, default="linear",choices=["linear","cnn","vq_vae"])
     parser.add_argument('--state_vector', type=bool, default=False,help="if true adds encoder for state vector to the model")
-    parser.add_argument('--activation_function', type=str, default='relu')
+    parser.add_argument('--activation_function', type=str, default='relu',help="activation function used in the model")
     #VQ_VAE parameters
     parser.add_argument('--vae_model', type=str, default="embedingdim_1")
     parser.add_argument('--vae_embedings', type=int, default=65536)
