@@ -3,7 +3,7 @@ import numpy as np
 import torch
 def tokenize_image(tokenizerModel,obs,device):
     obs= obs.transpose(2, 0, 1)
-    return tokenizerModel.encodeSingle(torch.tensor(obs,dtype=torch.float32).to(device).div(256))
+    return tokenizerModel.quantizeSingle(torch.tensor(obs,dtype=torch.float32).to(device).div(256))
 
 
 def evaluate_episode_rtg(
@@ -31,7 +31,7 @@ def evaluate_episode_rtg(
     pov_std = torch.from_numpy(pov_std).to(device=device)
 
     state = env.reset()
-    if vq_vae:
+    if vq_vae is not None:
         state_pov=tokenize_image(vq_vae,state["pov"],device)
     else:
         state_pov=torch.tensor(state["pov"]).to(device).div(256)
@@ -90,7 +90,7 @@ def evaluate_episode_rtg(
         state, reward, done, _ = env.step(action)
         if visualize:
             env.render(mode='human')
-        if vq_vae:#TODO make a function
+        if vq_vae is not None:#TODO make a function
             state_pov=tokenize_image(vq_vae,state["pov"],device)#tokenize observation whith vq_vae
         else:
             state_pov=torch.tensor(state["pov"]).to(device).div(256)
