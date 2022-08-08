@@ -190,8 +190,10 @@ def main(parameters):
                                         rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), rtgBatch[-1]], axis=0)
                                 else:
                                         rtgBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, 1)), rtgBatch[-1]], axis=0)
-                                if state_vector:
-                                        stateBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, state_dim)) , stateBatch[-1]], axis=0)
+                                if state_vector:                
+                                        stateBatch[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght, state_dim[0])) , stateBatch[-1]], axis=0)
+                                        
+                                        
                                 
                                 timesteps[-1] = np.concatenate([np.zeros(( max_len - sequence_lenght)), timesteps[-1]], axis=0)
                                 mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
