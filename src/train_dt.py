@@ -199,14 +199,14 @@ def main(parameters):
                                 mask.append(np.concatenate([np.zeros((max_len - sequence_lenght)), np.ones((sequence_lenght))], axis=0))
                 
                 if pov_encoder == "linear":
-                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256).flatten(start_dim=2)
+                        obsBatch = th.tensor(np.array(obsBatch)).to(dtype=th.float32, device=device).divide(256).flatten(start_dim=2)
                 elif pov_encoder == "cnn":
-                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device).divide(256)
+                         obsBatch = th.tensor(np.array(obsBatch)).to(dtype=th.float32, device=device).divide(256)
                 elif pov_encoder == "vq_vae":
-                        obsBatch = th.tensor(obsBatch).to(dtype=th.float32, device=device) 
+                        obsBatch = th.tensor(np.array(obsBatch)).to(dtype=th.float32, device=device) 
                
                 if state_vector:
-                        stateBatch= th.tensor(stateBatch).to(dtype=th.float32, device=device) 
+                        stateBatch= th.tensor(np.array(stateBatch)).to(dtype=th.float32, device=device)
                 else:
                         stateBatch=None  
    
