@@ -317,11 +317,14 @@ def main(parameters):
                         config=parameters)
 
         def save(epoch,checkpoint_file):#TODO maybe merge whith kmeans
+
                 th.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            },checkpoint_file)
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                },checkpoint_file)
+                wandb.save(checkpoint_file)
+
         def load(validation_data=None):
                 checkpoint = th.load(checkpoint_file)
                 model.load_state_dict(checkpoint['model_state_dict'])
