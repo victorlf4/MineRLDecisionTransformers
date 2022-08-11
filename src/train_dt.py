@@ -48,7 +48,7 @@ def main(parameters):
         buffer_target_size=parameters['buffer_target_size']
         buffer_target_size_validation=parameters['buffer_target_size_validation']
         validation_trajectories=parameters['validation_trajectories']
-        warmup_steps = parameters['warmup_steps']
+        schedule_steps = parameters['schedule_steps']
         visualize=parameters['visualize']
         
         num_steps_per_iter=parameters['num_steps_per_iter']
@@ -146,7 +146,7 @@ def main(parameters):
         else:        
                 trajectory_buffer=BufferedTrajectoryIter(data,buffer_target_size=buffer_target_size,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
                 trajectory_buffer_validation=BufferedTrajectoryIter(data_validation,buffer_target_size=buffer_target_size_validation,sequence_size=max_length,reward_to_go=TRUE,max_ep_len_dataset=max_ep_len_dataset,store_rewards2go=parameters["store_rewards2go"])
-        trajectory_buffer_iter=trajectory_buffer.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters)+warmup_steps)        
+        trajectory_buffer_iter=trajectory_buffer.buffered_batch_iter(batch_size,num_batches=(num_steps_per_iter*max_iters))        
         trajectory_buffer_iter_validation=trajectory_buffer_validation.buffered_batch_iter(batch_size,num_batches=(validation_steps*max_iters))#TODO make this dependent on num of validation iterations
                 
                 
@@ -243,10 +243,34 @@ def main(parameters):
         lr=parameters['learning_rate'],
         weight_decay=parameters['weight_decay'])
 
-        scheduler = th.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lambda steps: min((steps+1)/warmup_steps, 1))
-        def eval_episodes(target_rew):
+        
+        if parameters['scheduler'] == 'warmup':
+                scheduler = th.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lambda steps: min((steps+1)/schedule_steps, 1))    
+        elif parameters['scheduler'] == 'cosine':
+            scheduler = th.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=parameters['max_iters'])   
+        elif parameters['scheduler'] == 'inv':
+            scheduler = th.optim.lr_scheduler.InverseSquareRoot(optimizer, eta_min=1e-6) 
+        elif parameters['scheduler'] == 'constant':
+            scheduler = th.optim.lr_scheduler.ConstantLR(optimizer)
+        elif parameters['scheduler'] == 'linear':
+                scheduler = th.optim.lr_scheduler.LinearLR(optimizer, 
+                                                           last_epoch=-1,
+                                                           step_size=parameters['max_iters'],
+                                                           gamma=0.0)
+        elif parameters['scheduler'] == 'multistep':
+                scheduler = th.optim.lr_scheduler.MultiStepLR(optimizer, 
+                                                           milestones=[int(parameters['max_iters']*0.5), int(parameters['max_iters']*0.75)],
+                                                           gamma=0.1)
+        elif parameters['scheduler'] == 'exponential':
+                scheduler = th.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
+        elif parameters['scheduler'] == 'reduceonplateau':
+                scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True)
+       
+
+
+        def eval_episodes(target_rew):  
                 def fn(model):
                         returns, lengths = [], []
                         for _ in range(num_eval_episodes):
@@ -380,7 +404,9 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--learning_rate', '-lr', type=float, default=0.02)
     parser.add_argument('--weight_decay', '-wd', type=float, default=1e-4)
-    parser.add_argument('--warmup_steps', type=int, default=100)
+    parser.add_argument('--scheduler', type=str, default='warmup',help="Scheduler used for learning rate annealing",choices=['warmup','cosine'])
+    parser.add_argument('--schedule_steps', type=int, default=100,help="Number of steps to anneal the learning rate")
+    
     #Evaluation parameters
     parser.add_argument('--num_eval_episodes', type=int, default=1)
     parser.add_argument('--validation_steps', type=int, default=10)
