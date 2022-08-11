@@ -26,6 +26,7 @@ from utils.buffer_trajectory_load import BufferedTrajectoryIter
 def main(parameters):              
         #loading parameters
         use_checkpoint=parameters['use_checkpoint']
+        startingIter=0#Number of the first iteration of the model, used to load current epoch from checpoint.
         batch_size = parameters['batch_size']
         num_eval_episodes = parameters['num_eval_episodes']
         discrete_actions = parameters['kmeans_actions']
@@ -320,23 +321,28 @@ def main(parameters):
 
                 th.save({
                 'epoch': epoch,
+                'steps': trainer.total_steps,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 },checkpoint_file)
                 wandb.save(checkpoint_file)
 
+        
         def load(validation_data=None):
                 checkpoint = th.load(checkpoint_file)
                 model.load_state_dict(checkpoint['model_state_dict'])
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
+                iter=checkpoint['epoch']
+                trainer.total_steps=checkpoint['steps']
+                return iter
+                
 
         if os.path.exists(checkpoint_file) and use_checkpoint:
                 print("Loading saved decision transformer model")#TODO make it so weight and biases continues in the same run if possible
-                load()
+                startingIter = load()
         
-
-        for iteration in range(max_iters):
+        
+        for iteration in range(startingIter,startingIter+max_iters):
                 validate = parameters["num_validation_iters"]!=0 and ((iteration+1)%parameters["num_validation_iters"]) != 0
 
                 outputs = trainer.train_iteration(num_steps=num_steps_per_iter, iter_num=iteration+1, print_logs=True,validation=validate)
