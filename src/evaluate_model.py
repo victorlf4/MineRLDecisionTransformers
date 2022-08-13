@@ -13,7 +13,8 @@ def main(parameters):
         checkpoint_file ="./models/"+parameters['model_name']
         num_eval_episodes=parameters["num_eval_episodes"]
         dataset_name=parameters["env"]
-        env,_=load_env(dataset_name,record=parameters["record"],vectorize_actions=parameters["vectorize_actions"])
+        env,_=load_env(dataset_name,record=parameters["record"],vectorize_actions=parameters["vectorize_actions"],collab=parameters["using_collab"])
+        using_collab=parameters['using_collab'] and parameters['record']
         device=parameters["device"]
         act_dim=env.action_space["vector"].shape[0]
        
@@ -107,7 +108,8 @@ def main(parameters):
                                                 target_return=target_rew/1,
                                                 mode=mode,
                                                 device=device,
-                                                visualize=visualize
+                                                visualize=visualize,
+                                                collab=using_collab
                                                 )
                                 returns.append(ret)
                                 lengths.append(length)
@@ -130,6 +132,7 @@ if __name__ == '__main__':
     #General parameters
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model_name', type=str, default="linear_k20_l3_h1_diamond_tfm")
+    parser.add_argument('--using_collab','-c', type=bool, default=False,help="Uses the collab gym renderer to render the evaluation")
     #Enviroment parameters
     parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0')
     parser.add_argument('--vectorize_actions' , type=bool, default=False)#TODO make this automatic

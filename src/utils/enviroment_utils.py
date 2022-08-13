@@ -3,7 +3,7 @@ import gym
 from minerl.herobraine.wrappers.vector_wrapper  import Vectorized
 from minerl.herobraine.wrappers.obfuscation_wrapper  import Obfuscated
 import minerl
-def load_env(env_name,vectorize_actions=False,obfuscate_actions=False,record=False):
+def load_env(env_name,vectorize_actions=False,obfuscate_actions=False,record=False,collab=False):
                 data_enviroment=None
                 if vectorize_actions:
                         spec_pipeline =  minerl.data.make(env_name,  data_dir='data')
@@ -19,7 +19,12 @@ def load_env(env_name,vectorize_actions=False,obfuscate_actions=False,record=Fal
                 
                 enviroment = gym.make(env_name)
                 if record:
-                        enviroment=Monitor(enviroment,"./video",force=True)#TODO fix some bugs whith not doing the steps at the same time
+                        if collab:
+                                from colabgymrender.recorder import Recorder
+                                enviroment = Recorder(enviroment,"./video",force=True)
+                                
+                        else:
+                                enviroment=Monitor(enviroment,"./video",force=True)#TODO fix some bugs whith not doing the steps at the same time
                 
                 return enviroment,data_enviroment
 def vectorize_dataset(data):
