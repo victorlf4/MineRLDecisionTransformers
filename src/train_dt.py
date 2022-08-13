@@ -102,8 +102,7 @@ def main(parameters):
                 if parameters['record']:
                         if parameters['using_collab']:
                                 from colabgymrender.recorder import Recorder
-                                enviroment = Recorder(enviroment,"./video")
-                                
+                                enviroment = Recorder(enviroment,"./video")      
                         else:
                                 enviroment=Monitor(enviroment,"./video",force=True)#TODO fix some bugs whith not doing the steps at the same time
                 
