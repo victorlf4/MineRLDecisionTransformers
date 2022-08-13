@@ -50,6 +50,7 @@ def main(parameters):
         validation_trajectories=parameters['validation_trajectories']
         schedule_steps = parameters['schedule_steps']
         visualize=parameters['visualize']
+        using_collab=parameters['using_collab'] and parameters['record']
         
         num_steps_per_iter=parameters['num_steps_per_iter']
         max_iters=parameters['max_iters']
@@ -97,8 +98,14 @@ def main(parameters):
                 
                 
                 enviroment = gym.make(env_name)
+                
                 if parameters['record']:
-                        enviroment=Monitor(enviroment,"./video",force=True)#TODO fix some bugs whith not doing the steps at the same time
+                        if parameters['using_collab']:
+                                from colabgymrender.recorder import Recorder
+                                enviroment = Recorder(enviroment,"./video")
+                                
+                        else:
+                                enviroment=Monitor(enviroment,"./video",force=True)#TODO fix some bugs whith not doing the steps at the same time
                 
                 return enviroment,data_enviroment
         env,data_enviroment=load_env(parameters["env"])
@@ -288,7 +295,8 @@ def main(parameters):
                                                 target_return=target_rew/1,
                                                 mode=mode,
                                                 device=device,
-                                                visualize=visualize
+                                                visualize=visualize,
+                                                collab=using_collab
                                                 )
                                 returns.append(ret)
                                 lengths.append(length)
@@ -378,7 +386,7 @@ def main(parameters):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, default='normal')#not usefull currently
-    #General parameters    
+    #General parameters     
     parser.add_argument('--max_iters', type=int, default=100,help="Number of iterations to execute during training")
     parser.add_argument('--num_steps_per_iter', type=int, default=100,help="Number of batches in an iteration")
     parser.add_argument('--num_validation_iters', type=int, default=10,help="Number of validation iterantions before running minecraft")#num of validation iterations before running the minerl env.
@@ -387,6 +395,7 @@ if __name__ == '__main__':
     parser.add_argument('--group_name','-g' , type=str, default="tfm",help="wandb group name")
     parser.add_argument('--use_checkpoint', type=bool, default=False,help="If true saves the model each iteration")#TODo eliminate and replace whith just havign a checkpooint name
     parser.add_argument('--model_name', type=str, default="decisiontransformers_convolution",help="Name of the model used in the checkpoint file and in wandb")
+    parser.add_argument('--using_collab','-c', type=bool, default=False,help="Uses the collab gym renderer to render the evaluation")
     #Enviroment and Data parameters
     parser.add_argument('--env', type=str, default='MineRLObtainDiamondVectorObf-v0', help="MineRl enviroment the model will be evaluated in")
     parser.add_argument('--vectorize_actions' , type=bool, default=False,help="Necesary to train and evaluate on Basalt envs and datasets")#TODO make this automatic
@@ -402,7 +411,7 @@ if __name__ == '__main__':
     #Training hyperparameters
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--learning_rate', '-lr', type=float, default=0.02)
+    parser.add_argument('--learning_rate', '-lr', type=float, default=0.002147)
     parser.add_argument('--weight_decay', '-wd', type=float, default=1e-4)
     parser.add_argument('--scheduler', type=str, default='warmup',help="Scheduler used for learning rate annealing",choices=['warmup','cosine'])
     parser.add_argument('--schedule_steps', type=int, default=100,help="Number of steps to anneal the learning rate")

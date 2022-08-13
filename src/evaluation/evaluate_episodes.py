@@ -21,7 +21,8 @@ def evaluate_episode_rtg(
         device='cuda',
         target_return=None,
         mode='normal',
-        visualize=False
+        visualize=False,
+        collab=False
     ):
 
     model.eval()
@@ -51,7 +52,7 @@ def evaluate_episode_rtg(
     actions = torch.zeros((0, act_dim), device=device, dtype=torch.float32)
     rewards = torch.zeros(0, device=device, dtype=torch.float32)
 
-    ep_return = target_return
+    ep_return = target_return   # target return is the return we want to reach
     target_return = torch.tensor(ep_return, device=device, dtype=torch.float32).reshape(1, 1)
     timesteps = torch.tensor(0, device=device, dtype=torch.long).reshape(1, 1)
 
@@ -123,4 +124,6 @@ def evaluate_episode_rtg(
         
         if done:
             break
+    if collab:
+        env.play() 
     return episode_return, episode_length
