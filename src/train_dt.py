@@ -217,7 +217,7 @@ def main(parameters):
                 else:
                         stateBatch=None  
    
-                actionBatch = th.tensor(actionBatch).to(dtype=th.float32, device=device)
+                actionBatch = th.tensor(np.array(actionBatch)).to(dtype=th.float32, device=device)
                 rewardsBatch = th.tensor(rewardsBatch).to(dtype=th.float32, device=device)
                 rtgBatch = th.tensor(rtgBatch).to(dtype=th.float32, device=device)   
                 timesteps = th.tensor(timesteps).to(dtype=th.long, device=device)
@@ -410,9 +410,9 @@ if __name__ == '__main__':
     #Training hyperparameters
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--learning_rate', '-lr', type=float, default=0.002147)
-    parser.add_argument('--weight_decay', '-wd', type=float, default=1e-4)
-    parser.add_argument('--scheduler', type=str, default='warmup',help="Scheduler used for learning rate annealing",choices=['warmup','cosine'])
+    parser.add_argument('--learning_rate', '-lr', type=float, default=0.0028625,help="Learning rate for the optimizer")
+    parser.add_argument('--weight_decay', '-wd', type=float,default=1e-4, help="Weight decay for the optimizer")
+    parser.add_argument('--scheduler', type=str, default='warmup',help="Scheduler used for learning rate annealing",choices=['warmup','cosine','inv','linear'])
     parser.add_argument('--schedule_steps', type=int, default=100,help="Number of steps to anneal the learning rate")
     
     #Evaluation parameters
