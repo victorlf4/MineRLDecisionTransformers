@@ -15,7 +15,6 @@ from training.seq_trainer import SequenceTrainer
 from evaluation.evaluate_episodes import evaluate_episode_rtg
 from evaluation.evaluate_validation import evaluate_validation_rtg
 from gym.wrappers import Monitor
-from minerl.herobraine.wrappers.video_recording_wrapper import VideoRecordingWrapper
 from minerl.herobraine.wrappers.vector_wrapper  import Vectorized
 from utils.verify_or_download_minerl import verify_or_download_dataset
 from utils.minerl_encode_sequence import minerlEncodeSequence
