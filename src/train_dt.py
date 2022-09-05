@@ -16,7 +16,6 @@ from evaluation.evaluate_episodes import evaluate_episode_rtg
 from evaluation.evaluate_validation import evaluate_validation_rtg
 from gym.wrappers import Monitor
 from minerl.herobraine.wrappers.vector_wrapper  import Vectorized
-from utils.verify_or_download_minerl import verify_or_download_dataset
 from utils.minerl_encode_sequence import minerlEncodeSequence
 from utils.minerl_iterators import MinerlActionIterator
 from utils.buffer_trajectory_load import BufferedTrajectoryIter
@@ -82,8 +81,7 @@ def main(parameters):
         else:
                 vae_model=None
         #Load minecraft env and dataset
-        verify_or_download_dataset(directory='data', environment=parameters["dataset"])
-        data = minerl.data.make(parameters["dataset"],  data_dir='data', num_workers=4)
+        data = #TODO
         
         def load_env(env_name):
                 data_enviroment=None
@@ -109,8 +107,8 @@ def main(parameters):
         env,data_enviroment=load_env(parameters["env"])
 
         #Load validation data
-        verify_or_download_dataset(directory='data', environment=parameters["dataset_validation"])#TODO allow to divide minerl diamond instead or use a custom dataset or minecraft run.
-        data_validation = minerl.data.make(parameters["dataset_validation"],  data_dir='data', num_workers=1)
+
+        data_validation = #TODO
 
         def save_kmeans():#TODO maybe move small functions like this to an utils file
                 th.save({
